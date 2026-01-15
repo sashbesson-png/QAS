@@ -5,9 +5,10 @@ import type { CameraStatus, WsConnectionStatus } from '../types';
 interface StatusBarProps {
   status: CameraStatus;
   wsStatus: WsConnectionStatus;
-  temperature: number;
+  temperature: number | null;
   frameRate: number;
   justConnected: boolean;
+  integrationTime: number | null;
 }
 
 const statusConfig = {
@@ -22,7 +23,7 @@ const wsStatusConfig = {
     CONNECTED: { text: 'Connected', color: 'bg-green-500' },
 }
 
-export const StatusBar: FC<StatusBarProps> = ({ status, wsStatus, temperature, frameRate, justConnected }) => {
+export const StatusBar: FC<StatusBarProps> = ({ status, wsStatus, temperature, frameRate, justConnected, integrationTime }) => {
   const { text, color } = statusConfig[status];
   const { text: wsText, color: wsColor } = wsStatusConfig[wsStatus];
   const animationClass = justConnected ? 'animate-pulse-once' : '';
@@ -46,12 +47,17 @@ export const StatusBar: FC<StatusBarProps> = ({ status, wsStatus, temperature, f
       </div>
       <div className="w-px h-5 bg-gray-600"></div>
       <div className="flex items-center space-x-2">
-        <span className="font-semibold text-gray-400">Temperature:</span>
-        <span className="font-mono text-cyan-300">{temperature.toFixed(1)}°C</span>
+        <span className="font-semibold text-gray-400">Temp:</span>
+        <span className="font-mono text-cyan-300">{temperature !== null ? `${temperature.toFixed(1)}°C` : '--'}</span>
+      </div>
+      <div className="w-px h-5 bg-gray-600"></div>
+      <div className="flex items-center space-x-2">
+        <span className="font-semibold text-gray-400">Int. Time:</span>
+        <span className="font-mono text-cyan-300">{integrationTime !== null ? `${integrationTime.toFixed(2)} ms` : '--'}</span>
       </div>
       <div className="w-px h-5 bg-gray-600"></div>
        <div className="flex items-center space-x-2">
-        <span className="font-semibold text-gray-400">Frame Rate:</span>
+        <span className="font-semibold text-gray-400">FPS:</span>
         <span className="font-mono text-cyan-300">{frameRate.toFixed(0)} Hz</span>
       </div>
     </div>

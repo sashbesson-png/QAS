@@ -69,6 +69,8 @@ const App: FC = () => {
   // Analysis State
   const [histogramData, setHistogramData] = useState<number[]>([]);
   const [imageStats, setImageStats] = useState<{ min: number; max: number; mean: number } | null>(null);
+  const [cameraTemperature, setCameraTemperature] = useState<number | null>(null);
+  const [cameraIntegrationTime, setCameraIntegrationTime] = useState<number | null>(null);
 
   const addLog = useCallback((message: string, source: 'app' | 'server' = 'app') => {
     const prefix = source === 'server' ? '[Server]' : '[App]';
@@ -130,6 +132,14 @@ const App: FC = () => {
             }
             if (message.stats) {
               setImageStats(message.stats);
+            }
+            if (message.camera_info) {
+              if (message.camera_info.temperature !== null) {
+                setCameraTemperature(message.camera_info.temperature);
+              }
+              if (message.camera_info.integration_time_ms !== null) {
+                setCameraIntegrationTime(message.camera_info.integration_time_ms);
+              }
             }
             frameCount.current++;
             break;
@@ -278,7 +288,7 @@ const App: FC = () => {
             <CameraIcon className="w-8 h-8 text-cyan-400" />
             <h1 className="text-2xl font-bold text-white tracking-tight">SWIR Camera Control</h1>
           </div>
-          <StatusBar status={cameraStatus} wsStatus={wsStatus} temperature={25.3} frameRate={frameRate} justConnected={justConnected} />
+          <StatusBar status={cameraStatus} wsStatus={wsStatus} temperature={cameraTemperature} frameRate={frameRate} justConnected={justConnected} integrationTime={cameraIntegrationTime} />
         </header>
 
         <main className="grid grid-cols-1 lg:grid-cols-3 gap-6">

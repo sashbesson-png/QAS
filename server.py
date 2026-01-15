@@ -136,6 +136,13 @@ class SimulatedFrameStreamer:
         logging.info(f"Sim: Row Mirroring set to {enable}.")
         return True
 
+    def get_temperature(self):
+        base_temp = 25.0 + np.random.uniform(-0.5, 0.5)
+        return base_temp
+
+    def get_integration_time(self):
+        return self.integration_time
+
 
 STATE = {"camera": None, "streaming_task": None, "stop_streaming": False}
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -198,6 +205,35 @@ def create_jpeg_from_frame(frame_obj):
     return jpeg_b64, histogram_list, stats
 
 
+def get_camera_info():
+    cam = STATE.get("camera")
+    if not cam:
+        return {"temperature": None, "integration_time_ms": None}
+
+    temperature = None
+    integration_time_ms = None
+
+    if hasattr(cam, 'get_temperature'):
+        try:
+            temperature = float(cam.get_temperature())
+        except Exception:
+            pass
+
+    if hasattr(cam, 'get_integration_time'):
+        try:
+            raw_integration = cam.get_integration_time()
+            integration_time_ms = raw_integration / 100_000.0
+        except Exception:
+            pass
+    elif hasattr(cam, 'integration_time'):
+        try:
+            integration_time_ms = cam.integration_time / 100_000.0
+        except Exception:
+            pass
+
+    return {"temperature": temperature, "integration_time_ms": integration_time_ms}
+
+
 def frame_reader_thread():
     """Background thread that reads frames and puts them in a queue."""
     logging.info("Frame reader thread started.")
@@ -248,12 +284,14 @@ async def stream_frames(websocket):
                 frame = FRAME_QUEUE.get(timeout=0.5)
                 jpeg_b64, histogram, stats = create_jpeg_from_frame(frame)
                 if jpeg_b64:
+                    camera_info = get_camera_info()
                     await websocket.send(json.dumps({
                         "type": "image_frame",
                         "data": jpeg_b64,
                         "source": "live" if not IS_SIMULATED else "simulated",
                         "histogram": histogram,
-                        "stats": stats
+                        "stats": stats,
+                        "camera_info": camera_info
                     }))
 
                 elapsed = time.time() - last_frame_time
@@ -354,12 +392,14 @@ async def handle_get_frames(websocket, params):
     for frame in frames:
         jpeg_b64, histogram, stats = create_jpeg_from_frame(frame)
         if jpeg_b64:
+            camera_info = get_camera_info()
             await websocket.send(json.dumps({
                 "type": "image_frame",
                 "data": jpeg_b64,
                 "source": "live" if not IS_SIMULATED else "simulated",
                 "histogram": histogram,
-                "stats": stats
+                "stats": stats,
+                "camera_info": camera_info
             }))
         await asyncio.sleep(0.1)
 
