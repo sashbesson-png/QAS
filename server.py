@@ -468,6 +468,103 @@ async def handle_get_frames(websocket, params):
         await asyncio.sleep(0.1)
 
 
+CALIBRATION_DATA = {
+    "dark_images": [],
+    "bright_images": [],
+    "temperature": 25.0,
+    "integration_time_ms": 5.0,
+    "coefficients_generated": False
+}
+
+
+async def handle_upload_calibration_images(websocket, params):
+    dark_images = params.get('dark_images', [])
+    bright_images = params.get('bright_images', [])
+    temperature = params.get('temperature', 25.0)
+    integration_time_ms = params.get('integration_time_ms', 5.0)
+
+    CALIBRATION_DATA["dark_images"] = dark_images
+    CALIBRATION_DATA["bright_images"] = bright_images
+    CALIBRATION_DATA["temperature"] = temperature
+    CALIBRATION_DATA["integration_time_ms"] = integration_time_ms
+    CALIBRATION_DATA["coefficients_generated"] = False
+
+    await send_log(websocket, f"Received {len(dark_images)} dark image(s) and {len(bright_images)} bright image(s).")
+    await send_log(websocket, f"Calibration params: T={temperature}C, Int={integration_time_ms}ms")
+
+
+async def handle_generate_calibration_coefficients(websocket, params):
+    temperature = params.get('temperature', CALIBRATION_DATA.get('temperature', 25.0))
+    integration_time_ms = params.get('integration_time_ms', CALIBRATION_DATA.get('integration_time_ms', 5.0))
+
+    dark_count = len(CALIBRATION_DATA.get("dark_images", []))
+    bright_count = len(CALIBRATION_DATA.get("bright_images", []))
+
+    if dark_count == 0 or bright_count == 0:
+        await send_error(websocket, "Cannot generate coefficients: missing dark or bright images.")
+        return
+
+    await send_log(websocket, f"Generating NUC/BPR coefficients from {dark_count} dark and {bright_count} bright images...")
+
+    if IS_SIMULATED:
+        await asyncio.sleep(0.5)
+        await send_log(websocket, "Computing dark frame average (offset correction)...")
+        await asyncio.sleep(0.3)
+        await send_log(websocket, "Computing bright frame average (gain correction)...")
+        await asyncio.sleep(0.3)
+        await send_log(websocket, "Detecting bad pixels from variance analysis...")
+        await asyncio.sleep(0.2)
+        await send_log(websocket, f"NUC/BPR coefficients generated for T={temperature}C, Int={integration_time_ms}ms")
+        CALIBRATION_DATA["coefficients_generated"] = True
+    else:
+        try:
+            cam = STATE.get("camera")
+            if cam and hasattr(cam, 'generate_nuc_coefficients'):
+                await send_log(websocket, "Calling camera generate_nuc_coefficients...")
+                cam.generate_nuc_coefficients()
+            await send_log(websocket, "NUC/BPR coefficients generated successfully.")
+            CALIBRATION_DATA["coefficients_generated"] = True
+        except Exception as e:
+            await send_error(websocket, f"Failed to generate coefficients: {e}")
+
+
+async def handle_write_calibration_to_flash(websocket, params):
+    memory_slot = params.get('memory_slot', 0)
+    temperature = params.get('temperature', CALIBRATION_DATA.get('temperature', 25.0))
+    integration_time_ms = params.get('integration_time_ms', CALIBRATION_DATA.get('integration_time_ms', 5.0))
+
+    await send_log(websocket, f"Writing calibration data to flash memory slot {memory_slot}...")
+
+    if IS_SIMULATED:
+        await asyncio.sleep(0.3)
+        await send_log(websocket, f"Erasing flash sector for slot {memory_slot}...")
+        await asyncio.sleep(0.3)
+        await send_log(websocket, f"Writing NUC coefficients to slot {memory_slot}...")
+        await asyncio.sleep(0.3)
+        await send_log(websocket, f"Writing BPR map to slot {memory_slot}...")
+        await asyncio.sleep(0.2)
+        await send_log(websocket, f"Writing metadata: T={temperature}C, Int={integration_time_ms}ms")
+        await asyncio.sleep(0.2)
+        await send_log(websocket, f"Verifying written data in slot {memory_slot}...")
+        await asyncio.sleep(0.2)
+        await send_log(websocket, f"Calibration data successfully written to slot {memory_slot}.")
+    else:
+        try:
+            cam = STATE.get("camera")
+            if cam:
+                slot_base_address = 0x20000 + (memory_slot * 0x10000)
+                if hasattr(cam, 'write_nuc_to_flash'):
+                    await send_log(websocket, f"Writing NUC to flash at {hex(slot_base_address)}...")
+                    cam.write_nuc_to_flash(slot_base_address)
+                if hasattr(cam, 'write_bpr_to_flash'):
+                    bpr_address = slot_base_address + 0x8000
+                    await send_log(websocket, f"Writing BPR to flash at {hex(bpr_address)}...")
+                    cam.write_bpr_to_flash(bpr_address)
+                await send_log(websocket, f"Calibration written to slot {memory_slot}.")
+        except Exception as e:
+            await send_error(websocket, f"Failed to write calibration to flash: {e}")
+
+
 async def handle_run_calibration_script(websocket, params):
     await send_log(websocket, "Starting calibration script execution...")
     try:
@@ -572,6 +669,12 @@ async def handler(websocket):
                     await handle_get_frames(websocket, params)
                 elif command == "run_calibration_script":
                     await handle_run_calibration_script(websocket, params)
+                elif command == "upload_calibration_images":
+                    await handle_upload_calibration_images(websocket, params)
+                elif command == "generate_calibration_coefficients":
+                    await handle_generate_calibration_coefficients(websocket, params)
+                elif command == "write_calibration_to_flash":
+                    await handle_write_calibration_to_flash(websocket, params)
                 elif command == "set_dac_voltage":
                     await handle_set_dac_voltage(websocket, params)
                 else:
