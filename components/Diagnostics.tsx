@@ -1,7 +1,7 @@
 
-import React, { FC } from 'react';
+import React, { FC, memo } from 'react';
 import { Section } from './Section';
-import { BeakerIcon } from './icons'; // Using BeakerIcon for "diagnostics"
+import { BeakerIcon } from './icons';
 
 interface DiagnosticsProps {
     totalMessages: number;
@@ -10,7 +10,7 @@ interface DiagnosticsProps {
     lastRawMessage: string;
 }
 
-export const Diagnostics: FC<DiagnosticsProps> = ({ totalMessages, framesReceived, statusUpdates, lastRawMessage }) => {
+const DiagnosticsComponent: FC<DiagnosticsProps> = ({ totalMessages, framesReceived, statusUpdates, lastRawMessage }) => {
 
     const Stat: FC<{ label: string; value: number | string }> = ({ label, value }) => (
         <div className="flex justify-between items-center text-sm">
@@ -49,3 +49,5 @@ export const Diagnostics: FC<DiagnosticsProps> = ({ totalMessages, framesReceive
         </Section>
     );
 };
+
+export const Diagnostics = memo(DiagnosticsComponent);

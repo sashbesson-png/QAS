@@ -30,12 +30,16 @@ const App: FC = () => {
   const websocket = useRef<WebSocket | null>(null);
   const frameCount = useRef<number>(0);
   const isRecordingRef = useRef<boolean>(false);
+  const recordedFramesRef = useRef<string[]>([]);
+  const lastHistogramUpdate = useRef<number>(0);
+  const lastStatsUpdate = useRef<number>(0);
 
-  // Diagnostic State
-  const [totalMessages, setTotalMessages] = useState(0);
-  const [framesReceived, setFramesReceived] = useState(0);
-  const [statusUpdates, setStatusUpdates] = useState(0);
-  const [lastRawMessage, setLastRawMessage] = useState('');
+  // Diagnostic State - use refs for high-frequency updates
+  const totalMessagesRef = useRef(0);
+  const framesReceivedRef = useRef(0);
+  const statusUpdatesRef = useRef(0);
+  const lastRawMessageRef = useRef('');
+  const [diagnostics, setDiagnostics] = useState({ totalMessages: 0, framesReceived: 0, statusUpdates: 0, lastRawMessage: '' });
 
   // Settings State
   const [integrationTime, setIntegrationTime] = useState<number>(5.00);
@@ -46,6 +50,7 @@ const App: FC = () => {
   const [captureFormat, setCaptureFormat] = useState<CaptureFormat>('png');
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [recordedFrames, setRecordedFrames] = useState<string[]>([]);
+  const [recordingFrameCount, setRecordingFrameCount] = useState<number>(0);
   const [capturedFrames, setCapturedFrames] = useState<string[]>([]);
 
   // Image Corrections State
@@ -111,15 +116,17 @@ const App: FC = () => {
       };
 
       ws.onmessage = (event) => {
-        setTotalMessages(prev => prev + 1);
-        setLastRawMessage(event.data);
+        totalMessagesRef.current++;
+        lastRawMessageRef.current = event.data;
         const message = JSON.parse(event.data);
+        const now = performance.now();
+
         switch (message.type) {
           case 'log':
             addLog(message.message, 'server');
             break;
           case 'status_update':
-            setStatusUpdates(prev => prev + 1);
+            statusUpdatesRef.current++;
             const newStatus = (message.status || '').toUpperCase();
             if (['POWERED_OFF', 'IDLE', 'STREAMING'].includes(newStatus)) {
                 setCameraStatus(newStatus as CameraStatus);
@@ -129,16 +136,23 @@ const App: FC = () => {
             }
             break;
           case 'image_frame':
-            setFramesReceived(prev => prev + 1);
+            framesReceivedRef.current++;
             const frameDataUrl = `data:image/jpeg;base64,${message.data}`;
             setImageSrc(frameDataUrl);
             setImageSourceType(message.source || 'simulated');
-            if (message.histogram) {
+
+            // Throttle histogram updates to max 10Hz
+            if (message.histogram && now - lastHistogramUpdate.current > 100) {
               setHistogramData(message.histogram);
+              lastHistogramUpdate.current = now;
             }
-            if (message.stats) {
+
+            // Throttle stats updates to max 10Hz
+            if (message.stats && now - lastStatsUpdate.current > 100) {
               setImageStats(message.stats);
             }
+
+            // Update camera info less frequently (only when changed)
             if (message.camera_info) {
               if (message.camera_info.temperature !== null) {
                 setCameraTemperature(message.camera_info.temperature);
@@ -150,8 +164,10 @@ const App: FC = () => {
                 setTargetFrameRate(message.camera_info.frame_rate);
               }
             }
+
+            // Use ref for recording to avoid setState on every frame
             if (isRecordingRef.current) {
-              setRecordedFrames(prev => [...prev, frameDataUrl]);
+              recordedFramesRef.current.push(frameDataUrl);
             }
             frameCount.current++;
             break;
@@ -205,6 +221,17 @@ const App: FC = () => {
     const interval = setInterval(() => {
         setFrameRate(frameCount.current);
         frameCount.current = 0;
+        // Update diagnostics state periodically (1Hz) instead of every message
+        setDiagnostics({
+          totalMessages: totalMessagesRef.current,
+          framesReceived: framesReceivedRef.current,
+          statusUpdates: statusUpdatesRef.current,
+          lastRawMessage: lastRawMessageRef.current
+        });
+        // Update recording frame count display
+        if (isRecordingRef.current) {
+          setRecordingFrameCount(recordedFramesRef.current.length);
+        }
     }, 1000);
     return () => clearInterval(interval);
   }, []);
@@ -315,8 +342,11 @@ const App: FC = () => {
     if (isRecording) {
       isRecordingRef.current = false;
       setIsRecording(false);
-      addLog(`Recording stopped. ${recordedFrames.length} frames captured.`, 'app');
+      // Sync ref to state when recording stops
+      setRecordedFrames([...recordedFramesRef.current]);
+      addLog(`Recording stopped. ${recordedFramesRef.current.length} frames captured.`, 'app');
     } else {
+      recordedFramesRef.current = [];
       setRecordedFrames([]);
       isRecordingRef.current = true;
       setIsRecording(true);
@@ -325,20 +355,21 @@ const App: FC = () => {
   };
 
   const handleSaveRecording = async () => {
-    if (recordedFrames.length === 0) {
+    const frames = recordedFramesRef.current.length > 0 ? recordedFramesRef.current : recordedFrames;
+    if (frames.length === 0) {
       addLog('No frames to save.', 'app');
       return;
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 
-    for (let i = 0; i < recordedFrames.length; i++) {
+    for (let i = 0; i < frames.length; i++) {
       const link = document.createElement('a');
       const frameNum = String(i + 1).padStart(4, '0');
       link.download = `recording_${timestamp}_frame${frameNum}.${captureFormat === 'jpeg' ? 'jpg' : captureFormat}`;
 
       if (captureFormat === 'jpeg') {
-        link.href = recordedFrames[i];
+        link.href = frames[i];
         link.click();
       } else {
         const img = new Image();
@@ -354,12 +385,12 @@ const App: FC = () => {
             link.click();
           }
         };
-        img.src = recordedFrames[i];
+        img.src = frames[i];
       }
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
-    addLog(`Saved ${recordedFrames.length} frames as ${captureFormat.toUpperCase()}`, 'app');
+    addLog(`Saved ${frames.length} frames as ${captureFormat.toUpperCase()}`, 'app');
   };
 
   const isConnected = wsStatus === 'CONNECTED';
@@ -570,7 +601,7 @@ const App: FC = () => {
                   {isRecording && (
                     <div className="mt-2 flex items-center space-x-2">
                       <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
-                      <span className="text-sm text-red-400">Recording: {recordedFrames.length} frames</span>
+                      <span className="text-sm text-red-400">Recording: {recordingFrameCount} frames</span>
                     </div>
                   )}
                   {!isRecording && recordedFrames.length > 0 && (
@@ -581,10 +612,10 @@ const App: FC = () => {
             </Section>
             
             <Diagnostics
-                totalMessages={totalMessages}
-                framesReceived={framesReceived}
-                statusUpdates={statusUpdates}
-                lastRawMessage={lastRawMessage}
+                totalMessages={diagnostics.totalMessages}
+                framesReceived={diagnostics.framesReceived}
+                statusUpdates={diagnostics.statusUpdates}
+                lastRawMessage={diagnostics.lastRawMessage}
             />
 
             <div className="bg-gray-800 rounded-lg shadow-inner flex-grow flex flex-col">

@@ -1,5 +1,5 @@
 
-import React, { FC } from 'react';
+import React, { FC, memo } from 'react';
 import { Section } from './Section';
 import { Histogram } from './Histogram';
 import { ChartBarIcon } from './icons';
@@ -11,9 +11,8 @@ interface ImageAnalysisProps {
   serverStats: { min: number; max: number; mean: number } | null;
 }
 
-export const ImageAnalysis: FC<ImageAnalysisProps> = ({ histogramData, sourceType, serverStats }) => {
+const ImageAnalysisComponent: FC<ImageAnalysisProps> = ({ histogramData, sourceType, serverStats }) => {
   const stats = serverStats || { mean: 0, min: 0, max: 0 };
-
 
   return (
     <Section title="Histogram Analysis" icon={<ChartBarIcon className="w-6 h-6" />}>
@@ -37,3 +36,5 @@ export const ImageAnalysis: FC<ImageAnalysisProps> = ({ histogramData, sourceTyp
     </Section>
   );
 };
+
+export const ImageAnalysis = memo(ImageAnalysisComponent);

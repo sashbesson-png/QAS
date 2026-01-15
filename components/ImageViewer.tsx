@@ -1,5 +1,5 @@
 
-import React, { FC, useState } from 'react';
+import React, { FC, useState, useRef, useCallback, memo } from 'react';
 import { Section } from './Section';
 import { ViewfinderCircleIcon } from './icons';
 import type { ImageSourceType } from '../types';
@@ -9,29 +9,33 @@ interface ImageViewerProps {
   sourceType: ImageSourceType;
 }
 
-export const ImageViewer: FC<ImageViewerProps> = ({ imageSrc, sourceType }) => {
+const ImageViewerComponent: FC<ImageViewerProps> = ({ imageSrc, sourceType }) => {
   const [hoveredPixel, setHoveredPixel] = useState<{ x: number, y: number } | null>(null);
+  const lastUpdateRef = useRef<number>(0);
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const now = performance.now();
+    if (now - lastUpdateRef.current < 50) return;
+    lastUpdateRef.current = now;
+
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    
+
     if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
-        setHoveredPixel(null);
-        return;
+      setHoveredPixel(null);
+      return;
     }
 
-    // Scale coordinates to VGA resolution (640x480)
     const vgaX = Math.floor((x / rect.width) * 640);
     const vgaY = Math.floor((y / rect.height) * 480);
 
     setHoveredPixel({ x: vgaX, y: vgaY });
-  };
+  }, []);
 
-  const handleMouseLeave = () => {
+  const handleMouseLeave = useCallback(() => {
     setHoveredPixel(null);
-  };
+  }, []);
 
   return (
     <Section title="Image View" icon={<ViewfinderCircleIcon className="w-6 h-6" />}>
@@ -62,3 +66,5 @@ export const ImageViewer: FC<ImageViewerProps> = ({ imageSrc, sourceType }) => {
     </Section>
   );
 };
+
+export const ImageViewer = memo(ImageViewerComponent);
