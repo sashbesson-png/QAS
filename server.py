@@ -35,6 +35,8 @@ class SimulatedFrameStreamer:
         self.agc_enabled = True
         self.agc_min_target = 4000
         self.agc_max_target = 12000
+        self.nuc_enabled = True
+        self.bpr_enabled = True
         logging.info("Initialized SIMULATED pyqas.FrameStreamer.")
 
     def perform_power_up(self):
@@ -112,11 +114,13 @@ class SimulatedFrameStreamer:
         return data
 
     def enable_nuc(self, enable):
-        logging.info(f"Sim: NUC set to {enable}.")
+        self.nuc_enabled = bool(enable)
+        logging.info(f"Sim: NUC set to {self.nuc_enabled}.")
         return True
 
     def enable_bpr(self, enable):
-        logging.info(f"Sim: BPR set to {enable}.")
+        self.bpr_enabled = bool(enable)
+        logging.info(f"Sim: BPR set to {self.bpr_enabled}.")
         return True
 
     def configure_aec(self, lower_limit=None, upper_limit=None, num_frames_to_average=None, **kwargs):
@@ -266,6 +270,12 @@ def get_camera_info():
             "min_target": getattr(cam, 'agc_min_target', None),
             "max_target": getattr(cam, 'agc_max_target', None)
         }
+
+    if hasattr(cam, 'nuc_enabled'):
+        info["nuc_enabled"] = cam.nuc_enabled
+
+    if hasattr(cam, 'bpr_enabled'):
+        info["bpr_enabled"] = cam.bpr_enabled
 
     return info
 
