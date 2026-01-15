@@ -166,6 +166,14 @@ class SimulatedFrameStreamer:
     def get_integration_time(self):
         return self.integration_time
 
+    def set_frame_rate(self, frame_rate):
+        logging.info(f"Simulating set frame rate to {frame_rate} FPS.")
+        self.frame_rate = max(1, min(60, frame_rate))
+        return True
+
+    def get_frame_rate(self):
+        return self.frame_rate
+
 
 STATE = {"camera": None, "streaming_task": None, "stop_streaming": False}
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -277,6 +285,14 @@ def get_camera_info():
     if hasattr(cam, 'bpr_enabled'):
         info["bpr_enabled"] = cam.bpr_enabled
 
+    if hasattr(cam, 'get_frame_rate'):
+        try:
+            info["frame_rate"] = cam.get_frame_rate()
+        except Exception:
+            pass
+    elif hasattr(cam, 'frame_rate'):
+        info["frame_rate"] = cam.frame_rate
+
     return info
 
 
@@ -322,9 +338,11 @@ async def stream_frames(websocket):
     reader_thread.start()
 
     last_frame_time = time.time()
-    target_interval = 1.0 / 30.0
 
     while get_camera_status() == "STREAMING" and not STATE["stop_streaming"]:
+        cam = STATE.get("camera")
+        current_fps = getattr(cam, 'frame_rate', 30) if cam else 30
+        target_interval = 1.0 / max(1, current_fps)
         try:
             try:
                 frame = FRAME_QUEUE.get(timeout=0.5)

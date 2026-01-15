@@ -38,7 +38,7 @@ const App: FC = () => {
 
   // Settings State
   const [integrationTime, setIntegrationTime] = useState<number>(5.00);
-  const [targetFrameRate, setTargetFrameRate] = useState<number>(30); // Kept for display, but control is disabled
+  const [targetFrameRate, setTargetFrameRate] = useState<number>(30);
   const [columnSorting, setColumnSorting] = useState<boolean>(true);
   const [rowMirroring, setRowMirroring] = useState<boolean>(false);
   const [numFrames, setNumFrames] = useState<number>(10);
@@ -140,6 +140,9 @@ const App: FC = () => {
               if (message.camera_info.integration_time_ms !== null) {
                 setCameraIntegrationTime(message.camera_info.integration_time_ms);
               }
+              if (message.camera_info.frame_rate !== undefined) {
+                setTargetFrameRate(message.camera_info.frame_rate);
+              }
             }
             frameCount.current++;
             break;
@@ -218,8 +221,12 @@ const App: FC = () => {
   
   const handleSetIntegrationTime = (value: number) => {
     setIntegrationTime(value);
-    // As per docs, integration time is in units of 10ns. 1ms = 100,000 units.
     sendCommand('set_integration_time', { integration_time: Math.round(value * 100_000) });
+  };
+
+  const handleSetFrameRate = (value: number) => {
+    setTargetFrameRate(value);
+    sendCommand('set_frame_rate', { frame_rate: value });
   };
   
   const handleNucToggle = (enabled: boolean) => {
@@ -387,9 +394,9 @@ const App: FC = () => {
                       <input type="range" id="integrationTime" min="0.01" max="100.00" step="0.01" value={integrationTime} onChange={(e) => setIntegrationTime(Number(e.target.value))} onMouseUp={(e) => handleSetIntegrationTime(Number(e.currentTarget.value))} className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer" disabled={!isConnected} />
                       <span className="text-center text-sm mt-1">{integrationTime.toFixed(2)} ms</span>
                   </div>
-                   <div className="flex flex-col opacity-50">
-                      <label htmlFor="frameRate" className="text-sm font-medium text-gray-400 mb-1">Target Frame Rate (Not Adjustable)</label>
-                      <input type="range" id="frameRate" min="1" max="60" step="1" value={targetFrameRate} onChange={(e) => setTargetFrameRate(Number(e.target.value))} className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-not-allowed" disabled={true} />
+                  <div className="flex flex-col">
+                      <label htmlFor="frameRate" className="text-sm font-medium text-gray-400 mb-1">Target Frame Rate (FPS)</label>
+                      <input type="range" id="frameRate" min="1" max="60" step="1" value={targetFrameRate} onChange={(e) => setTargetFrameRate(Number(e.target.value))} onMouseUp={(e) => handleSetFrameRate(Number(e.currentTarget.value))} className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer" disabled={!isConnected} />
                       <span className="text-center text-sm mt-1">{targetFrameRate} FPS</span>
                   </div>
                    <div className="flex justify-around pt-4 border-t border-gray-700">
