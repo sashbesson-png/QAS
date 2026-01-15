@@ -1,0 +1,5 @@
+{
+  "name": "SWIR Camera Control GUI",
+  "description": "A graphical user interface to generate Python commands for controlling a SWIR camera based on the pyqas API. This app provides controls for streaming, image correction, and other common camera functions.",
+  "requestFramePermissions": []
+}
