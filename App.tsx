@@ -390,9 +390,19 @@ const App: FC = () => {
             <Section title="Image Settings" icon={<CogIcon />}>
                 <div className="space-y-6">
                   <div className="flex flex-col">
-                      <label htmlFor="integrationTime" className="text-sm font-medium text-gray-400 mb-1">Integration Time (ms)</label>
-                      <input type="range" id="integrationTime" min="0.01" max="100.00" step="0.01" value={integrationTime} onChange={(e) => setIntegrationTime(Number(e.target.value))} onMouseUp={(e) => handleSetIntegrationTime(Number(e.currentTarget.value))} className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer" disabled={!isConnected} />
-                      <span className="text-center text-sm mt-1">{integrationTime.toFixed(2)} ms</span>
+                      <div className="flex justify-between items-center mb-1">
+                        <label htmlFor="integrationTime" className="text-sm font-medium text-gray-400">Integration Time (ms)</label>
+                        {aecEnabled && cameraIntegrationTime !== null && (
+                          <span className="text-xs text-cyan-400 font-medium">AEC Active</span>
+                        )}
+                      </div>
+                      <input type="range" id="integrationTime" min="0.01" max="100.00" step="0.01" value={integrationTime} onChange={(e) => setIntegrationTime(Number(e.target.value))} onMouseUp={(e) => handleSetIntegrationTime(Number(e.currentTarget.value))} className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer" disabled={!isConnected || aecEnabled} />
+                      <div className="flex justify-between items-center mt-1">
+                        <span className="text-xs text-gray-500">Set: {integrationTime.toFixed(2)} ms</span>
+                        <span className={`text-sm font-medium ${aecEnabled ? 'text-cyan-300' : 'text-white'}`}>
+                          Actual: {cameraIntegrationTime !== null ? cameraIntegrationTime.toFixed(2) : '--'} ms
+                        </span>
+                      </div>
                   </div>
                   <div className="flex flex-col">
                       <label htmlFor="frameRate" className="text-sm font-medium text-gray-400 mb-1">Target Frame Rate (FPS)</label>
