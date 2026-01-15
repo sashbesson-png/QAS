@@ -28,6 +28,13 @@ class SimulatedFrameStreamer:
         self._is_running = False
         self.integration_time = 500000
         self.frame_rate = 30
+        self.aec_enabled = True
+        self.aec_lower_limit = 3000
+        self.aec_upper_limit = 11000
+        self.aec_num_frames = 4
+        self.agc_enabled = True
+        self.agc_min_target = 4000
+        self.agc_max_target = 12000
         logging.info("Initialized SIMULATED pyqas.FrameStreamer.")
 
     def perform_power_up(self):
@@ -113,19 +120,31 @@ class SimulatedFrameStreamer:
         return True
 
     def configure_aec(self, lower_limit=None, upper_limit=None, num_frames_to_average=None, **kwargs):
-        logging.info(f"Sim: Configure AEC - lower={lower_limit}, upper={upper_limit}, frames={num_frames_to_average}.")
+        if lower_limit is not None:
+            self.aec_lower_limit = lower_limit
+        if upper_limit is not None:
+            self.aec_upper_limit = upper_limit
+        if num_frames_to_average is not None:
+            self.aec_num_frames = num_frames_to_average
+        logging.info(f"Sim: Configure AEC - lower={self.aec_lower_limit}, upper={self.aec_upper_limit}, frames={self.aec_num_frames}.")
         return True
 
     def configure_agc(self, min_target_value=None, max_target_value=None, **kwargs):
-        logging.info(f"Sim: Configure AGC - min={min_target_value}, max={max_target_value}.")
+        if min_target_value is not None:
+            self.agc_min_target = min_target_value
+        if max_target_value is not None:
+            self.agc_max_target = max_target_value
+        logging.info(f"Sim: Configure AGC - min={self.agc_min_target}, max={self.agc_max_target}.")
         return True
 
     def enable_aec(self, enable):
-        logging.info(f"Sim: AEC set to {enable}.")
+        self.aec_enabled = bool(enable)
+        logging.info(f"Sim: AEC set to {self.aec_enabled}.")
         return True
 
     def enable_agc(self, enable):
-        logging.info(f"Sim: AGC set to {enable}.")
+        self.agc_enabled = bool(enable)
+        logging.info(f"Sim: AGC set to {self.agc_enabled}.")
         return True
 
     def set_column_sorting(self, enable):
@@ -231,7 +250,24 @@ def get_camera_info():
         except Exception:
             pass
 
-    return {"temperature": temperature, "integration_time_ms": integration_time_ms}
+    info = {"temperature": temperature, "integration_time_ms": integration_time_ms}
+
+    if hasattr(cam, 'aec_enabled'):
+        info["aec"] = {
+            "enabled": cam.aec_enabled,
+            "lower_limit": getattr(cam, 'aec_lower_limit', None),
+            "upper_limit": getattr(cam, 'aec_upper_limit', None),
+            "num_frames": getattr(cam, 'aec_num_frames', None)
+        }
+
+    if hasattr(cam, 'agc_enabled'):
+        info["agc"] = {
+            "enabled": cam.agc_enabled,
+            "min_target": getattr(cam, 'agc_min_target', None),
+            "max_target": getattr(cam, 'agc_max_target', None)
+        }
+
+    return info
 
 
 def frame_reader_thread():
