@@ -273,6 +273,16 @@ async def stream_frames(websocket):
 async def handle_power_on(websocket, params):
     STATE["camera"].perform_power_up()
     await send_log(websocket, "Camera power-up sequence performed.")
+
+    default_voltages = {
+        0: 0.1,   # VRST
+        1: 0.9,   # VDETCOM
+        2: 2.0,   # VDTI
+    }
+    for channel, voltage in default_voltages.items():
+        await handle_set_dac_voltage(websocket, {'channel': channel, 'voltage': voltage})
+    await send_log(websocket, "Applied default bias voltages (VRST=0.1V, VDETCOM=0.9V, VDTI=2V).")
+
     await send_status_update(websocket, "IDLE")
 
 
