@@ -243,7 +243,7 @@ export const Calibration: FC<CalibrationProps> = ({ sendCommand, isConnected }) 
                     value={memorySlot}
                     onChange={setMemorySlot}
                     min={0}
-                    max={15}
+                    max={49}
                     step={1}
                 />
             </div>
