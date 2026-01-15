@@ -1,11 +1,11 @@
 
 import React, { useState, useCallback, FC, useEffect, useRef } from 'react';
-import { CameraIcon, CogIcon, BeakerIcon, ExclamationTriangleIcon, BoltIcon, StopIcon, PlayIcon, PowerIcon, WrenchScrewdriverIcon } from './components/icons';
+import { CameraIcon, CogIcon, BeakerIcon, ExclamationTriangleIcon, BoltIcon, StopIcon, PlayIcon, PowerIcon, WrenchScrewdriverIcon, VideoCameraIcon, ArrowDownTrayIcon } from './components/icons';
 import { Section } from './components/Section';
 import { ToggleButton } from './components/ToggleButton';
 import { CommandOutput } from './components/CommandOutput';
 import { StatusBar } from './components/StatusBar';
-import type { CameraStatus, DacChannel, WsConnectionStatus, DacVoltages, ImageSourceType } from './types';
+import type { CameraStatus, DacChannel, WsConnectionStatus, DacVoltages, ImageSourceType, CaptureFormat } from './types';
 import { NumericInput } from './components/NumericInput';
 import { ImageAnalysis } from './components/ImageAnalysis';
 import { ImageViewer } from './components/ImageViewer';
@@ -29,6 +29,7 @@ const App: FC = () => {
 
   const websocket = useRef<WebSocket | null>(null);
   const frameCount = useRef<number>(0);
+  const isRecordingRef = useRef<boolean>(false);
 
   // Diagnostic State
   const [totalMessages, setTotalMessages] = useState(0);
@@ -42,6 +43,10 @@ const App: FC = () => {
   const [columnSorting, setColumnSorting] = useState<boolean>(true);
   const [rowMirroring, setRowMirroring] = useState<boolean>(false);
   const [numFrames, setNumFrames] = useState<number>(10);
+  const [captureFormat, setCaptureFormat] = useState<CaptureFormat>('png');
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [recordedFrames, setRecordedFrames] = useState<string[]>([]);
+  const [capturedFrames, setCapturedFrames] = useState<string[]>([]);
 
   // Image Corrections State
   const [nucEnabled, setNucEnabled] = useState<boolean>(true);
@@ -125,7 +130,8 @@ const App: FC = () => {
             break;
           case 'image_frame':
             setFramesReceived(prev => prev + 1);
-            setImageSrc(`data:image/jpeg;base64,${message.data}`);
+            const frameDataUrl = `data:image/jpeg;base64,${message.data}`;
+            setImageSrc(frameDataUrl);
             setImageSourceType(message.source || 'simulated');
             if (message.histogram) {
               setHistogramData(message.histogram);
@@ -143,6 +149,9 @@ const App: FC = () => {
               if (message.camera_info.frame_rate !== undefined) {
                 setTargetFrameRate(message.camera_info.frame_rate);
               }
+            }
+            if (isRecordingRef.current) {
+              setRecordedFrames(prev => [...prev, frameDataUrl]);
             }
             frameCount.current++;
             break;
@@ -269,7 +278,88 @@ const App: FC = () => {
   };
 
   const handleGetFrames = () => {
+      setCapturedFrames([]);
       sendCommand('get_frames', { num_frames: numFrames });
+  };
+
+  const handleSaveCurrentFrame = () => {
+    if (!imageSrc) return;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const link = document.createElement('a');
+    link.download = `frame_${timestamp}.${captureFormat === 'jpeg' ? 'jpg' : captureFormat}`;
+
+    if (captureFormat === 'jpeg') {
+      link.href = imageSrc;
+    } else {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          const mimeType = captureFormat === 'png' ? 'image/png' : captureFormat === 'tiff' ? 'image/tiff' : 'image/png';
+          link.href = canvas.toDataURL(mimeType);
+          link.click();
+        }
+      };
+      img.src = imageSrc;
+      return;
+    }
+    link.click();
+    addLog(`Saved frame as ${captureFormat.toUpperCase()}`, 'app');
+  };
+
+  const handleToggleRecording = () => {
+    if (isRecording) {
+      isRecordingRef.current = false;
+      setIsRecording(false);
+      addLog(`Recording stopped. ${recordedFrames.length} frames captured.`, 'app');
+    } else {
+      setRecordedFrames([]);
+      isRecordingRef.current = true;
+      setIsRecording(true);
+      addLog('Recording started...', 'app');
+    }
+  };
+
+  const handleSaveRecording = async () => {
+    if (recordedFrames.length === 0) {
+      addLog('No frames to save.', 'app');
+      return;
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+
+    for (let i = 0; i < recordedFrames.length; i++) {
+      const link = document.createElement('a');
+      const frameNum = String(i + 1).padStart(4, '0');
+      link.download = `recording_${timestamp}_frame${frameNum}.${captureFormat === 'jpeg' ? 'jpg' : captureFormat}`;
+
+      if (captureFormat === 'jpeg') {
+        link.href = recordedFrames[i];
+        link.click();
+      } else {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0);
+            const mimeType = captureFormat === 'png' ? 'image/png' : 'image/png';
+            link.href = canvas.toDataURL(mimeType);
+            link.click();
+          }
+        };
+        img.src = recordedFrames[i];
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    addLog(`Saved ${recordedFrames.length} frames as ${captureFormat.toUpperCase()}`, 'app');
   };
 
   const isConnected = wsStatus === 'CONNECTED';
@@ -416,12 +506,77 @@ const App: FC = () => {
                 </div>
             </Section>
             
-            <Section title="Frame Capture" icon={<CameraIcon />}>
-              <div className="flex items-center space-x-4">
-                <NumericInput label="Frames" value={numFrames} onChange={setNumFrames} min={1} max={100} />
-                <button onClick={handleGetFrames} disabled={!isConnected || cameraStatus !== 'IDLE'} className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-md">
-                  Get Frames
-                </button>
+            <Section title="Frame Capture & Recording" icon={<CameraIcon />}>
+              <div className="space-y-4">
+                <div className="flex items-center space-x-3">
+                  <label className="text-sm font-medium text-gray-400 whitespace-nowrap">Format:</label>
+                  <select
+                    value={captureFormat}
+                    onChange={(e) => setCaptureFormat(e.target.value as CaptureFormat)}
+                    className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  >
+                    <option value="png">PNG (Lossless)</option>
+                    <option value="jpeg">JPEG (Compressed)</option>
+                    <option value="tiff">TIFF (High Quality)</option>
+                  </select>
+                </div>
+
+                <div className="border-t border-gray-700 pt-4">
+                  <h4 className="text-sm font-medium text-gray-300 mb-2">Single Frame</h4>
+                  <button
+                    onClick={handleSaveCurrentFrame}
+                    disabled={!imageSrc}
+                    className="w-full flex items-center justify-center space-x-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-md"
+                  >
+                    <ArrowDownTrayIcon className="w-5 h-5" />
+                    <span>Save Current Frame</span>
+                  </button>
+                </div>
+
+                <div className="border-t border-gray-700 pt-4">
+                  <h4 className="text-sm font-medium text-gray-300 mb-2">Multi-Frame Capture</h4>
+                  <div className="flex items-center space-x-3 mb-3">
+                    <NumericInput label="Frames" value={numFrames} onChange={setNumFrames} min={1} max={100} />
+                    <button onClick={handleGetFrames} disabled={!isConnected || cameraStatus !== 'IDLE'} className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-md">
+                      Get Frames
+                    </button>
+                  </div>
+                </div>
+
+                <div className="border-t border-gray-700 pt-4">
+                  <h4 className="text-sm font-medium text-gray-300 mb-2">Video Recording</h4>
+                  <div className="flex items-center space-x-3">
+                    <button
+                      onClick={handleToggleRecording}
+                      disabled={!isConnected || cameraStatus !== 'STREAMING'}
+                      className={`flex-1 flex items-center justify-center space-x-2 font-semibold py-2 px-4 rounded-lg transition-colors shadow-md ${
+                        isRecording
+                          ? 'bg-red-600 hover:bg-red-700 text-white'
+                          : 'bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white'
+                      }`}
+                    >
+                      <VideoCameraIcon className="w-5 h-5" />
+                      <span>{isRecording ? 'Stop Recording' : 'Start Recording'}</span>
+                    </button>
+                    <button
+                      onClick={handleSaveRecording}
+                      disabled={recordedFrames.length === 0}
+                      className="flex items-center justify-center space-x-2 bg-cyan-600 hover:bg-cyan-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-md"
+                    >
+                      <ArrowDownTrayIcon className="w-5 h-5" />
+                      <span>Save</span>
+                    </button>
+                  </div>
+                  {isRecording && (
+                    <div className="mt-2 flex items-center space-x-2">
+                      <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+                      <span className="text-sm text-red-400">Recording: {recordedFrames.length} frames</span>
+                    </div>
+                  )}
+                  {!isRecording && recordedFrames.length > 0 && (
+                    <p className="mt-2 text-sm text-gray-400">{recordedFrames.length} frames ready to save</p>
+                  )}
+                </div>
               </div>
             </Section>
             

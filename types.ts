@@ -10,3 +10,5 @@ export type DacVoltages = {
 export type WsConnectionStatus = 'DISCONNECTED' | 'CONNECTED' | 'CONNECTING';
 
 export type ImageSourceType = 'live' | 'simulated' | 'none';
+
+export type CaptureFormat = 'png' | 'jpeg' | 'tiff' | 'raw';
