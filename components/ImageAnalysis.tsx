@@ -1,5 +1,5 @@
 
-import React, { FC, useMemo } from 'react';
+import React, { FC } from 'react';
 import { Section } from './Section';
 import { Histogram } from './Histogram';
 import { ChartBarIcon } from './icons';
@@ -8,41 +8,11 @@ import type { ImageSourceType } from '../types';
 interface ImageAnalysisProps {
   histogramData: number[];
   sourceType: ImageSourceType;
+  serverStats: { min: number; max: number; mean: number } | null;
 }
 
-export const ImageAnalysis: FC<ImageAnalysisProps> = ({ histogramData, sourceType }) => {
-  const stats = useMemo(() => {
-    if (!histogramData || histogramData.length === 0) {
-      return { mean: 0, min: 0, max: 0 };
-    }
-
-    let totalPixels = 0;
-    let weightedSum = 0;
-    let min = -1;
-    let max = -1;
-
-    for (let i = 0; i < histogramData.length; i++) {
-      const count = histogramData[i];
-      if (count > 0) {
-        if (min === -1) {
-          min = i;
-        }
-        max = i;
-        totalPixels += count;
-        weightedSum += i * count;
-      }
-    }
-
-    if (totalPixels === 0) {
-      return { mean: 0, min: 0, max: 0 };
-    }
-
-    return {
-      mean: weightedSum / totalPixels,
-      min: min,
-      max: max,
-    };
-  }, [histogramData]);
+export const ImageAnalysis: FC<ImageAnalysisProps> = ({ histogramData, sourceType, serverStats }) => {
+  const stats = serverStats || { mean: 0, min: 0, max: 0 };
 
 
   return (

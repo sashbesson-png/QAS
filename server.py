@@ -176,7 +176,15 @@ def create_jpeg_from_frame(frame_obj):
     frame_data = frame_obj.image
     if not isinstance(frame_data, np.ndarray):
         logging.error(f"Frame data is not a NumPy array, but {type(frame_data)}. Cannot create JPEG.")
-        return None
+        return None, None, None
+
+    raw_min = int(frame_data.min())
+    raw_max = int(frame_data.max())
+    raw_mean = float(frame_data.mean())
+
+    histogram, _ = np.histogram(frame_data.flatten(), bins=256, range=(0, 16384))
+    histogram_list = histogram.tolist()
+
     min_val, max_val = frame_data.min(), frame_data.max()
     if max_val == min_val:
         max_val = min_val + 1
@@ -184,7 +192,10 @@ def create_jpeg_from_frame(frame_obj):
     image = Image.fromarray(normalized_frame.astype(np.uint8))
     buffer = BytesIO()
     image.save(buffer, format="JPEG", quality=80)
-    return base64.b64encode(buffer.getvalue()).decode('utf-8')
+    jpeg_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+    stats = {"min": raw_min, "max": raw_max, "mean": raw_mean}
+    return jpeg_b64, histogram_list, stats
 
 
 def frame_reader_thread():
@@ -235,12 +246,14 @@ async def stream_frames(websocket):
         try:
             try:
                 frame = FRAME_QUEUE.get(timeout=0.5)
-                jpeg_b64 = create_jpeg_from_frame(frame)
+                jpeg_b64, histogram, stats = create_jpeg_from_frame(frame)
                 if jpeg_b64:
                     await websocket.send(json.dumps({
                         "type": "image_frame",
                         "data": jpeg_b64,
-                        "source": "live" if not IS_SIMULATED else "simulated"
+                        "source": "live" if not IS_SIMULATED else "simulated",
+                        "histogram": histogram,
+                        "stats": stats
                     }))
 
                 elapsed = time.time() - last_frame_time
@@ -339,12 +352,14 @@ async def handle_get_frames(websocket, params):
     frames = STATE["camera"].get_frames(num_frames=num_frames)
     await send_log(websocket, f"Captured {len(frames)} frames.")
     for frame in frames:
-        jpeg_b64 = create_jpeg_from_frame(frame)
+        jpeg_b64, histogram, stats = create_jpeg_from_frame(frame)
         if jpeg_b64:
             await websocket.send(json.dumps({
                 "type": "image_frame",
                 "data": jpeg_b64,
-                "source": "live" if not IS_SIMULATED else "simulated"
+                "source": "live" if not IS_SIMULATED else "simulated",
+                "histogram": histogram,
+                "stats": stats
             }))
         await asyncio.sleep(0.1)
 

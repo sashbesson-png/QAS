@@ -68,6 +68,7 @@ const App: FC = () => {
 
   // Analysis State
   const [histogramData, setHistogramData] = useState<number[]>([]);
+  const [imageStats, setImageStats] = useState<{ min: number; max: number; mean: number } | null>(null);
 
   const addLog = useCallback((message: string, source: 'app' | 'server' = 'app') => {
     const prefix = source === 'server' ? '[Server]' : '[App]';
@@ -123,7 +124,13 @@ const App: FC = () => {
           case 'image_frame':
             setFramesReceived(prev => prev + 1);
             setImageSrc(`data:image/jpeg;base64,${message.data}`);
-            setImageSourceType(message.source || 'simulated'); // Default to simulated if source is missing
+            setImageSourceType(message.source || 'simulated');
+            if (message.histogram) {
+              setHistogramData(message.histogram);
+            }
+            if (message.stats) {
+              setImageStats(message.stats);
+            }
             frameCount.current++;
             break;
           case 'error':
@@ -180,18 +187,6 @@ const App: FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    // This effect is now just for demonstration if no frames are coming in.
-    // The real histogram data would ideally come from server-side analysis.
-    if (imageSrc) {
-        const generateSampleHistogramData = () => {
-          const bins = 256;
-          const data = new Array(bins).fill(0).map(() => Math.random() * 500);
-          setHistogramData(data);
-        };
-        generateSampleHistogramData();
-    }
-  }, [imageSrc]);
 
   // Command Handlers
   const handlePower = (on: boolean) => {
@@ -374,7 +369,7 @@ const App: FC = () => {
           </div>
 
           <div className="lg:col-span-1 flex flex-col space-y-6">
-            <ImageAnalysis histogramData={histogramData} sourceType={imageSourceType} />
+            <ImageAnalysis histogramData={histogramData} sourceType={imageSourceType} serverStats={imageStats} />
             <Section title="Image Settings" icon={<CogIcon />}>
                 <div className="space-y-6">
                   <div className="flex flex-col">
