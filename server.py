@@ -76,15 +76,28 @@ class SimulatedFrameStreamer:
         logging.info(f"Simulating get {num_frames} frames.")
         frames = []
         for i in range(num_frames):
-            noise = np.random.randint(4000, 12000, size=(480, 640), dtype=np.uint16)
+            noise = np.random.randint(4000, 12000, size=(512, 640), dtype=np.uint16)
             x = np.linspace(0, 1000, 640)
-            y = np.linspace(0, 1000, 480)
+            y = np.linspace(0, 1000, 512)
             xv, yv = np.meshgrid(x, y)
             gradient = (xv + yv).astype(np.uint16)
             frame_data = noise + gradient
-            mock_frame = type('MockFrame', (), {'image': frame_data})()
+            pixels_1d = frame_data.view(np.uint32).flatten()
+            mock_frame = type('MockFrame', (), {
+                'image': frame_data,
+                'pixels': pixels_1d,
+                'pixels_2d': pixels_1d.reshape((512, 320)),
+                'rows': 512,
+                'columns': 640,
+                'frame_id': i,
+                'timestamp': time.time()
+            })()
             frames.append(mock_frame)
         return frames
+
+    def get_next_frame(self):
+        frames = self.get_frames(1)
+        return frames[0] if frames else None
 
     def set_dac_voltage(self, channel, voltage):
         logging.info(f"Sim: set DAC {channel} to {voltage}V.")
@@ -99,6 +112,9 @@ class SimulatedFrameStreamer:
         logging.info(f"Sim: write FPGA regs {[hex(a) for a in addresses]} with {[hex(v) for v in values]}.")
         return True
 
+    def write_fpga_register(self, addresses, values):
+        return self.write_fpga_registers(addresses, values)
+
     def read_device(self, address):
         val = np.random.randint(0, 256)
         logging.info(f"Sim: read device reg {hex(address)}, ret {hex(val)}.")
@@ -112,6 +128,18 @@ class SimulatedFrameStreamer:
         logging.info(f"Sim: read flash at {hex(start_address)}, {number_of_words} words.")
         data = [np.random.randint(0, 0xFFFFFFFF) for _ in range(number_of_words)]
         return data
+
+    def write_flash(self, start_address, data):
+        logging.info(f"Sim: write flash at {hex(start_address)}, {len(data)} words.")
+        return True
+
+    def erase_flash(self):
+        logging.info("Sim: erase flash.")
+        return True
+
+    def read_flash_status(self):
+        logging.info("Sim: read flash status.")
+        return 0x00000000
 
     def enable_nuc(self, enable):
         self.nuc_enabled = bool(enable)
