@@ -163,6 +163,13 @@ class SimulatedFrameStreamer:
         base_temp = 25.0 + np.random.uniform(-0.5, 0.5)
         return base_temp
 
+    def read_temperature(self):
+        return self.get_temperature()
+
+    def prepareRead(self):
+        logging.info("Sim: prepareRead() called")
+        return True
+
     def get_integration_time(self):
         return self.integration_time
 
@@ -245,9 +252,19 @@ def get_camera_info():
     temperature = None
     integration_time_ms = None
 
-    if hasattr(cam, 'get_temperature'):
+    if hasattr(cam, 'read_temperature'):
+        try:
+            temperature = float(cam.read_temperature())
+        except Exception:
+            pass
+    elif hasattr(cam, 'get_temperature'):
         try:
             temperature = float(cam.get_temperature())
+        except Exception:
+            pass
+    elif hasattr(cam, 'temperature'):
+        try:
+            temperature = float(cam.temperature)
         except Exception:
             pass
 
@@ -301,6 +318,9 @@ def frame_reader_thread():
     """Background thread that reads frames and puts them in a queue."""
     logging.info("Frame reader thread started.")
     last_frame_time = 0
+    consecutive_errors = 0
+    max_consecutive_errors = 5
+
     while not STATE["stop_streaming"]:
         try:
             cam = STATE.get("camera")
@@ -311,7 +331,37 @@ def frame_reader_thread():
                 elapsed = now - last_frame_time
                 if elapsed < target_interval:
                     time.sleep(target_interval - elapsed)
-                frames = cam.get_frames(num_frames=1)
+
+                try:
+                    frames = cam.get_frames(num_frames=1)
+                    consecutive_errors = 0
+                except Exception as frame_error:
+                    error_msg = str(frame_error).lower()
+                    consecutive_errors += 1
+                    logging.warning(f"Frame capture error ({consecutive_errors}/{max_consecutive_errors}): {frame_error}")
+
+                    if 'reinitialization' in error_msg or 'prepareread' in error_msg:
+                        if hasattr(cam, 'prepareRead'):
+                            try:
+                                logging.info("Calling prepareRead() for reinitialization...")
+                                cam.prepareRead()
+                            except Exception as prep_error:
+                                logging.error(f"prepareRead() failed: {prep_error}")
+
+                    if consecutive_errors >= max_consecutive_errors:
+                        logging.error("Too many consecutive errors, attempting camera restart...")
+                        try:
+                            cam.stop()
+                            time.sleep(0.5)
+                            cam.start()
+                            consecutive_errors = 0
+                            logging.info("Camera restarted successfully")
+                        except Exception as restart_error:
+                            logging.error(f"Camera restart failed: {restart_error}")
+
+                    time.sleep(0.1)
+                    continue
+
                 last_frame_time = time.time()
                 if frames:
                     try:
