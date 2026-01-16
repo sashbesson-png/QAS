@@ -45,9 +45,9 @@ const App: FC = () => {
   const [integrationTime, setIntegrationTime] = useState<number>(5.00);
   const [targetFrameRate, setTargetFrameRate] = useState<number>(30);
   const [columnSorting, setColumnSorting] = useState<boolean>(true);
-  const [rowMirroring, setRowMirroring] = useState<boolean>(false);
+  const [rowMirroring, setRowMirroring] = useState<boolean>(true);
   const [numFrames, setNumFrames] = useState<number>(10);
-  const [captureFormat, setCaptureFormat] = useState<CaptureFormat>('png');
+  const [captureFormat, setCaptureFormat] = useState<CaptureFormat>('avi');
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [recordedFrames, setRecordedFrames] = useState<string[]>([]);
   const [recordingFrameCount, setRecordingFrameCount] = useState<number>(0);
@@ -451,31 +451,34 @@ const App: FC = () => {
           <div className="lg:col-span-2 flex flex-col space-y-6">
             <ImageViewer imageSrc={imageSrc} sourceType={imageSourceType} />
             <Section title="Image Corrections" icon={<BeakerIcon />}>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-                 <div className="space-y-4 border-r border-gray-700 pr-8">
-                    <h3 className="font-semibold text-lg text-cyan-300">Corrections</h3>
-                    <ToggleButton label="Non-Uniform Correction (NUC)" enabled={nucEnabled} onChange={handleNucToggle} />
-                    <ToggleButton label="Bad Pixel Replacement (BPR)" enabled={bprEnabled} onChange={handleBprToggle} />
-                </div>
-                <div className="space-y-6">
-                   <div>
-                        <h3 className="font-semibold text-lg text-cyan-300 mb-2">Auto Exposure Control (AEC)</h3>
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                   <div className="border border-gray-700 rounded-lg p-4">
+                        <h3 className="font-semibold text-lg text-cyan-300 mb-3">Auto Exposure Control (AEC)</h3>
                         <ToggleButton label="Enable AEC" enabled={aecEnabled} onChange={handleAecToggle} />
-                        <div className="grid grid-cols-3 gap-4 mt-2">
+                        <div className="grid grid-cols-3 gap-4 mt-3">
                            <NumericInput label="Lower" value={aecLower} onChange={setAecLower} min={0} max={16383} />
                            <NumericInput label="Upper" value={aecUpper} onChange={setAecUpper} min={0} max={16383} />
                            <NumericInput label="Frames" value={aecFrames} onChange={setAecFrames} min={0} max={255} />
                         </div>
-                        <button onClick={handleApplyAec} className="w-full mt-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 text-white font-semibold py-1.5 px-4 rounded-lg text-sm transition-colors" disabled={!isConnected}>Apply AEC</button>
+                        <button onClick={handleApplyAec} className="w-full mt-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-semibold py-1.5 px-4 rounded-lg text-sm transition-colors" disabled={!isConnected}>Apply AEC</button>
                    </div>
-                   <div>
-                        <h3 className="font-semibold text-lg text-cyan-300 mb-2">Auto Gain Control (AGC)</h3>
+                   <div className="border border-gray-700 rounded-lg p-4">
+                        <h3 className="font-semibold text-lg text-cyan-300 mb-3">Auto Gain Control (AGC)</h3>
                         <ToggleButton label="Enable AGC" enabled={agcEnabled} onChange={handleAgcToggle} />
-                        <div className="grid grid-cols-2 gap-4 mt-2">
+                        <div className="grid grid-cols-2 gap-4 mt-3">
                           <NumericInput label="Min Target" value={agcMin} onChange={setAgcMin} min={0} max={16383} />
                           <NumericInput label="Max Target" value={agcMax} onChange={setAgcMax} min={0} max={16383} />
                         </div>
-                        <button onClick={handleApplyAgc} className="w-full mt-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 text-white font-semibold py-1.5 px-4 rounded-lg text-sm transition-colors" disabled={!isConnected}>Apply AGC</button>
+                        <button onClick={handleApplyAgc} className="w-full mt-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-semibold py-1.5 px-4 rounded-lg text-sm transition-colors" disabled={!isConnected}>Apply AGC</button>
+                   </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                   <div className="border border-gray-700 rounded-lg p-4">
+                    <ToggleButton label="Non-Uniform Correction (NUC)" enabled={nucEnabled} onChange={handleNucToggle} />
+                   </div>
+                   <div className="border border-gray-700 rounded-lg p-4">
+                    <ToggleButton label="Bad Pixel Replacement (BPR)" enabled={bprEnabled} onChange={handleBprToggle} />
                    </div>
                 </div>
               </div>

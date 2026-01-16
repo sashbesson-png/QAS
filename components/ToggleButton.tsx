@@ -10,7 +10,7 @@ interface ToggleButtonProps {
 export const ToggleButton: FC<ToggleButtonProps> = ({ label, enabled, onChange }) => {
   return (
     <div className="flex items-center justify-between w-full">
-      <span className="text-sm font-medium text-gray-300">{label}</span>
+      <span className="text-sm font-medium text-gray-300 mr-4">{label}</span>
       <button
         onClick={() => onChange(!enabled)}
         className={`${

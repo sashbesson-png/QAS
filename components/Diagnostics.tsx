@@ -34,8 +34,8 @@ const DiagnosticsComponent: FC<DiagnosticsProps> = ({ totalMessages, framesRecei
                         <div className="text-xs text-gray-400">Frames Rcvd</div>
                         <div className="text-lg font-bold text-white">{framesReceived}</div>
                     </div>
-                    <div>
-                        <div className="text-xs text-gray-400">Status Updates</div>
+                    <div title="Camera status change events (e.g., POWERED_OFF → IDLE → STREAMING)">
+                        <div className="text-xs text-gray-400 cursor-help">Status Updates</div>
                         <div className="text-lg font-bold text-white">{statusUpdates}</div>
                     </div>
                 </div>

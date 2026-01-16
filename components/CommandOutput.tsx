@@ -31,8 +31,8 @@ export const CommandOutput: FC<CommandOutputProps> = ({ command }) => {
           <span>{copied ? 'Copied!' : 'Copy'}</span>
         </button>
       </div>
-      <div className="p-4 font-mono text-cyan-300 bg-black/20 text-sm whitespace-pre-wrap break-words flex-grow flex items-center">
-        <span>{command}</span>
+      <div className="p-4 font-mono text-cyan-300 bg-black/20 text-sm whitespace-pre-wrap break-words flex-grow flex items-center overflow-auto">
+        <span className="break-all">{command}</span>
       </div>
     </div>
   );
