@@ -32,7 +32,7 @@ class SimulatedFrameStreamer:
         self.aec_lower_limit = 3000
         self.aec_upper_limit = 11000
         self.aec_num_frames = 4
-        self.agc_enabled = True
+        self.agc_enabled = False
         self.agc_min_target = 4000
         self.agc_max_target = 12000
         self.nuc_enabled = True
@@ -197,7 +197,8 @@ def get_camera_status():
 
 async def send_status_update(websocket, new_status):
     logging.info(f"State changed to: {new_status}")
-    await websocket.send(json.dumps({"type": "status_update", "status": new_status}))
+    camera_info = get_camera_info()
+    await websocket.send(json.dumps({"type": "status_update", "status": new_status, "camera_info": camera_info}))
 
 
 async def send_log(websocket, message):
@@ -220,16 +221,16 @@ def create_jpeg_from_frame(frame_obj):
     raw_max = int(frame_data.max())
     raw_mean = float(frame_data.mean())
 
-    histogram, _ = np.histogram(frame_data.flatten(), bins=256, range=(0, 16384))
+    histogram, _ = np.histogram(frame_data.flatten(), bins=128, range=(0, 16384))
     histogram_list = histogram.tolist()
 
-    min_val, max_val = frame_data.min(), frame_data.max()
+    min_val, max_val = raw_min, raw_max
     if max_val == min_val:
         max_val = min_val + 1
-    normalized_frame = (frame_data - min_val) / (max_val - min_val) * 255
-    image = Image.fromarray(normalized_frame.astype(np.uint8))
+    normalized_frame = ((frame_data - min_val) * (255.0 / (max_val - min_val))).astype(np.uint8)
+    image = Image.fromarray(normalized_frame)
     buffer = BytesIO()
-    image.save(buffer, format="JPEG", quality=80)
+    image.save(buffer, format="JPEG", quality=70)
     jpeg_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
     stats = {"min": raw_min, "max": raw_max, "mean": raw_mean}
@@ -299,11 +300,19 @@ def get_camera_info():
 def frame_reader_thread():
     """Background thread that reads frames and puts them in a queue."""
     logging.info("Frame reader thread started.")
+    last_frame_time = 0
     while not STATE["stop_streaming"]:
         try:
             cam = STATE.get("camera")
             if cam and cam.is_running():
+                current_fps = getattr(cam, 'frame_rate', 30)
+                target_interval = 1.0 / max(1, current_fps)
+                now = time.time()
+                elapsed = now - last_frame_time
+                if elapsed < target_interval:
+                    time.sleep(target_interval - elapsed)
                 frames = cam.get_frames(num_frames=1)
+                last_frame_time = time.time()
                 if frames:
                     try:
                         FRAME_QUEUE.put_nowait(frames[0])

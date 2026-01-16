@@ -56,7 +56,7 @@ const App: FC = () => {
   // Image Corrections State
   const [nucEnabled, setNucEnabled] = useState<boolean>(true);
   const [bprEnabled, setBprEnabled] = useState<boolean>(true);
-  const [agcEnabled, setAgcEnabled] = useState<boolean>(true);
+  const [agcEnabled, setAgcEnabled] = useState<boolean>(false);
   const [agcMin, setAgcMin] = useState<number>(4000);
   const [agcMax, setAgcMax] = useState<number>(12000);
   const [aecEnabled, setAecEnabled] = useState<boolean>(true);
@@ -133,6 +133,14 @@ const App: FC = () => {
                 addLog(`Camera status updated to: ${newStatus}`, 'server');
             } else {
                 addLog(`Received unknown camera status: '${message.status}'`, 'server');
+            }
+            if (message.camera_info) {
+              if (message.camera_info.temperature !== null) {
+                setCameraTemperature(message.camera_info.temperature);
+              }
+              if (message.camera_info.integration_time_ms !== null) {
+                setCameraIntegrationTime(message.camera_info.integration_time_ms);
+              }
             }
             break;
           case 'image_frame':
