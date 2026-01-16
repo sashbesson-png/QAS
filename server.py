@@ -267,6 +267,13 @@ def get_camera_info():
             temperature = float(cam.temperature)
         except Exception:
             pass
+    elif hasattr(cam, 'read_device'):
+        try:
+            temp_raw = cam.read_device(0x06)
+            if temp_raw is not None:
+                temperature = float(temp_raw) * 0.0625
+        except Exception:
+            pass
 
     if hasattr(cam, 'get_integration_time'):
         try:
