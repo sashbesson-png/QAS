@@ -361,6 +361,7 @@ def frame_reader_thread():
         try:
             cam = STATE.get("camera")
             if cam and cam.is_running():
+                frame_start = time.time()
                 try:
                     frames = cam.get_frames(num_frames=1)
                     consecutive_errors = 0
@@ -403,12 +404,23 @@ def frame_reader_thread():
                             FRAME_QUEUE.put_nowait(frames[0])
                         except queue.Full:
                             pass
+
+                frame_time = time.time() - frame_start
+                if frame_time < 0.005:
+                    time.sleep(0.005 - frame_time)
             else:
                 time.sleep(0.005)
         except Exception as e:
             logging.error(f"Frame reader thread error: {e}")
             time.sleep(0.05)
     logging.info("Frame reader thread stopped.")
+
+
+def get_frame_from_queue():
+    try:
+        return FRAME_QUEUE.get(timeout=0.05)
+    except queue.Empty:
+        return None
 
 
 async def stream_frames(websocket):
@@ -425,35 +437,36 @@ async def stream_frames(websocket):
     reader_thread.start()
 
     last_send_time = time.time()
+    loop = asyncio.get_event_loop()
 
     while get_camera_status() == "STREAMING" and not STATE["stop_streaming"]:
         cam = STATE.get("camera")
         current_fps = getattr(cam, 'frame_rate', 30) if cam else 30
         target_interval = 1.0 / max(1, current_fps)
         try:
-            try:
-                frame = FRAME_QUEUE.get(timeout=0.1)
+            frame = await loop.run_in_executor(None, get_frame_from_queue)
 
-                now = time.time()
-                elapsed = now - last_send_time
-                if elapsed < target_interval:
-                    await asyncio.sleep(target_interval - elapsed)
-
-                jpeg_b64, histogram, stats = create_jpeg_from_frame(frame)
-                if jpeg_b64:
-                    camera_info = get_camera_info()
-                    await websocket.send(json.dumps({
-                        "type": "image_frame",
-                        "data": jpeg_b64,
-                        "source": "live" if not IS_SIMULATED else "simulated",
-                        "histogram": histogram,
-                        "stats": stats,
-                        "camera_info": camera_info
-                    }))
-                    last_send_time = time.time()
-
-            except queue.Empty:
+            if frame is None:
                 await asyncio.sleep(0.01)
+                continue
+
+            now = time.time()
+            elapsed = now - last_send_time
+            if elapsed < target_interval:
+                await asyncio.sleep(target_interval - elapsed)
+
+            jpeg_b64, histogram, stats = create_jpeg_from_frame(frame)
+            if jpeg_b64:
+                camera_info = get_camera_info()
+                await websocket.send(json.dumps({
+                    "type": "image_frame",
+                    "data": jpeg_b64,
+                    "source": "live" if not IS_SIMULATED else "simulated",
+                    "histogram": histogram,
+                    "stats": stats,
+                    "camera_info": camera_info
+                }))
+                last_send_time = time.time()
 
         except websockets.ConnectionClosed:
             logging.warning("Connection closed during streaming.")
