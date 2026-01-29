@@ -318,15 +318,27 @@ const App: FC = () => {
   };
 
   const handleSaveCurrentFrame = () => {
-    if (!imageSrc) return;
+    if (!imageSrc) {
+      addLog('No frame to save.', 'app');
+      return;
+    }
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const link = document.createElement('a');
-    link.download = `frame_${timestamp}.${captureFormat === 'jpeg' ? 'jpg' : captureFormat}`;
+    const filename = `frame_${timestamp}.${captureFormat === 'jpeg' ? 'jpg' : captureFormat}`;
+
+    const downloadFile = (dataUrl: string, name: string) => {
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      addLog(`Saved frame as ${captureFormat.toUpperCase()}`, 'app');
+    };
 
     if (captureFormat === 'jpeg') {
-      link.href = imageSrc;
+      downloadFile(imageSrc, filename);
     } else {
-      const img = new Image();
+      const img = new window.Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
         canvas.width = img.width;
@@ -334,16 +346,15 @@ const App: FC = () => {
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0);
-          const mimeType = captureFormat === 'png' ? 'image/png' : captureFormat === 'tiff' ? 'image/tiff' : 'image/png';
-          link.href = canvas.toDataURL(mimeType);
-          link.click();
+          const mimeType = captureFormat === 'png' ? 'image/png' : 'image/png';
+          downloadFile(canvas.toDataURL(mimeType), filename);
         }
       };
+      img.onerror = () => {
+        addLog('Failed to process image for saving.', 'app');
+      };
       img.src = imageSrc;
-      return;
     }
-    link.click();
-    addLog(`Saved frame as ${captureFormat.toUpperCase()}`, 'app');
   };
 
   const handleToggleRecording = () => {
@@ -371,29 +382,39 @@ const App: FC = () => {
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 
-    for (let i = 0; i < frames.length; i++) {
+    const downloadFile = (dataUrl: string, name: string) => {
       const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    };
+
+    for (let i = 0; i < frames.length; i++) {
       const frameNum = String(i + 1).padStart(4, '0');
-      link.download = `recording_${timestamp}_frame${frameNum}.${captureFormat === 'jpeg' ? 'jpg' : captureFormat}`;
+      const filename = `recording_${timestamp}_frame${frameNum}.${captureFormat === 'jpeg' ? 'jpg' : captureFormat}`;
 
       if (captureFormat === 'jpeg') {
-        link.href = frames[i];
-        link.click();
+        downloadFile(frames[i], filename);
       } else {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(img, 0, 0);
-            const mimeType = captureFormat === 'png' ? 'image/png' : 'image/png';
-            link.href = canvas.toDataURL(mimeType);
-            link.click();
-          }
-        };
-        img.src = frames[i];
+        await new Promise<void>((resolve) => {
+          const img = new window.Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0);
+              const mimeType = captureFormat === 'png' ? 'image/png' : 'image/png';
+              downloadFile(canvas.toDataURL(mimeType), filename);
+            }
+            resolve();
+          };
+          img.onerror = () => resolve();
+          img.src = frames[i];
+        });
       }
       await new Promise(resolve => setTimeout(resolve, 100));
     }

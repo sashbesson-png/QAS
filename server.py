@@ -37,6 +37,11 @@ class SimulatedFrameStreamer:
         self.agc_max_target = 12000
         self.nuc_enabled = True
         self.bpr_enabled = True
+        x = np.linspace(0, 1000, 640)
+        y = np.linspace(0, 1000, 512)
+        xv, yv = np.meshgrid(x, y)
+        self._gradient = (xv + yv).astype(np.uint16)
+        self._frame_counter = 0
         logging.info("Initialized SIMULATED pyqas.FrameStreamer.")
 
     def perform_power_up(self):
@@ -73,23 +78,19 @@ class SimulatedFrameStreamer:
         return True
 
     def get_frames(self, num_frames=1, **kwargs):
-        logging.info(f"Simulating get {num_frames} frames.")
         frames = []
         for i in range(num_frames):
             noise = np.random.randint(4000, 12000, size=(512, 640), dtype=np.uint16)
-            x = np.linspace(0, 1000, 640)
-            y = np.linspace(0, 1000, 512)
-            xv, yv = np.meshgrid(x, y)
-            gradient = (xv + yv).astype(np.uint16)
-            frame_data = noise + gradient
+            frame_data = noise + self._gradient
             pixels_1d = frame_data.view(np.uint32).flatten()
+            self._frame_counter += 1
             mock_frame = type('MockFrame', (), {
                 'image': frame_data,
                 'pixels': pixels_1d,
                 'pixels_2d': pixels_1d.reshape((512, 320)),
                 'rows': 512,
                 'columns': 640,
-                'frame_id': i,
+                'frame_id': self._frame_counter,
                 'timestamp': time.time()
             })()
             frames.append(mock_frame)
@@ -213,7 +214,7 @@ class SimulatedFrameStreamer:
 STATE = {"camera": None, "streaming_task": None, "stop_streaming": False}
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-FRAME_QUEUE = queue.Queue(maxsize=5)
+FRAME_QUEUE = queue.Queue(maxsize=10)
 
 
 def get_camera_status():
@@ -256,16 +257,17 @@ def create_jpeg_from_frame(frame_obj):
     raw_max = int(frame_data.max())
     raw_mean = float(frame_data.mean())
 
-    histogram, _ = np.histogram(frame_data.flatten(), bins=128, range=(0, 16384))
+    histogram, _ = np.histogram(frame_data.ravel(), bins=128, range=(0, 16384))
     histogram_list = histogram.tolist()
 
     min_val, max_val = raw_min, raw_max
     if max_val == min_val:
         max_val = min_val + 1
-    normalized_frame = ((frame_data - min_val) * (255.0 / (max_val - min_val))).astype(np.uint8)
+    scale = 255.0 / (max_val - min_val)
+    normalized_frame = ((frame_data - min_val) * scale).astype(np.uint8)
     image = Image.fromarray(normalized_frame)
     buffer = BytesIO()
-    image.save(buffer, format="JPEG", quality=70)
+    image.save(buffer, format="JPEG", quality=60)
     jpeg_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
     stats = {"min": raw_min, "max": raw_max, "mean": raw_mean}
@@ -352,7 +354,6 @@ def get_camera_info():
 def frame_reader_thread():
     """Background thread that reads frames and puts them in a queue."""
     logging.info("Frame reader thread started.")
-    last_frame_time = 0
     consecutive_errors = 0
     max_consecutive_errors = 5
 
@@ -360,13 +361,6 @@ def frame_reader_thread():
         try:
             cam = STATE.get("camera")
             if cam and cam.is_running():
-                current_fps = getattr(cam, 'frame_rate', 30)
-                target_interval = 1.0 / max(1, current_fps)
-                now = time.time()
-                elapsed = now - last_frame_time
-                if elapsed < target_interval:
-                    time.sleep(target_interval - elapsed)
-
                 try:
                     frames = cam.get_frames(num_frames=1)
                     consecutive_errors = 0
@@ -394,10 +388,9 @@ def frame_reader_thread():
                         except Exception as restart_error:
                             logging.error(f"Camera restart failed: {restart_error}")
 
-                    time.sleep(0.1)
+                    time.sleep(0.05)
                     continue
 
-                last_frame_time = time.time()
                 if frames:
                     try:
                         FRAME_QUEUE.put_nowait(frames[0])
@@ -411,10 +404,10 @@ def frame_reader_thread():
                         except queue.Full:
                             pass
             else:
-                time.sleep(0.01)
+                time.sleep(0.005)
         except Exception as e:
             logging.error(f"Frame reader thread error: {e}")
-            time.sleep(0.1)
+            time.sleep(0.05)
     logging.info("Frame reader thread stopped.")
 
 
@@ -431,7 +424,7 @@ async def stream_frames(websocket):
     reader_thread = threading.Thread(target=frame_reader_thread, daemon=True)
     reader_thread.start()
 
-    last_frame_time = time.time()
+    last_send_time = time.time()
 
     while get_camera_status() == "STREAMING" and not STATE["stop_streaming"]:
         cam = STATE.get("camera")
@@ -439,7 +432,13 @@ async def stream_frames(websocket):
         target_interval = 1.0 / max(1, current_fps)
         try:
             try:
-                frame = FRAME_QUEUE.get(timeout=0.5)
+                frame = FRAME_QUEUE.get(timeout=0.1)
+
+                now = time.time()
+                elapsed = now - last_send_time
+                if elapsed < target_interval:
+                    await asyncio.sleep(target_interval - elapsed)
+
                 jpeg_b64, histogram, stats = create_jpeg_from_frame(frame)
                 if jpeg_b64:
                     camera_info = get_camera_info()
@@ -451,14 +450,10 @@ async def stream_frames(websocket):
                         "stats": stats,
                         "camera_info": camera_info
                     }))
-
-                elapsed = time.time() - last_frame_time
-                if elapsed < target_interval:
-                    await asyncio.sleep(target_interval - elapsed)
-                last_frame_time = time.time()
+                    last_send_time = time.time()
 
             except queue.Empty:
-                pass
+                await asyncio.sleep(0.01)
 
         except websockets.ConnectionClosed:
             logging.warning("Connection closed during streaming.")
