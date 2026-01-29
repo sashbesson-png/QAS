@@ -156,11 +156,11 @@ const App: FC = () => {
       const ws = new WebSocket(WEBSOCKET_URL);
       
       ws.onopen = () => {
+        console.log('[WS] Connected to server');
         setWsStatus('CONNECTED');
         addLog('Successfully connected to the WebSocket server.', 'app');
         setJustConnected(true);
         setTimeout(() => setJustConnected(false), 800);
-        // Proactively ask for the current status
         sendCommand('get_status');
         addLog('Requesting initial camera status...', 'app');
       };
@@ -168,8 +168,15 @@ const App: FC = () => {
       ws.onmessage = (event) => {
         totalMessagesRef.current++;
         lastRawMessageRef.current = event.data;
-        const message = JSON.parse(event.data);
+        let message;
+        try {
+          message = JSON.parse(event.data);
+        } catch (parseErr) {
+          console.error('[WS] Failed to parse message:', parseErr, event.data.substring(0, 200));
+          return;
+        }
         const now = performance.now();
+        console.log('[WS] Message type:', message.type, 'Total:', totalMessagesRef.current);
 
         switch (message.type) {
           case 'log':
@@ -178,6 +185,7 @@ const App: FC = () => {
           case 'status_update':
             statusUpdatesRef.current++;
             const newStatus = (message.status || '').toUpperCase();
+            console.log('[WS] Status update:', newStatus);
             if (['POWERED_OFF', 'IDLE', 'STREAMING'].includes(newStatus)) {
                 setCameraStatus(newStatus as CameraStatus);
                 addLog(`Camera status updated to: ${newStatus}`, 'server');
@@ -195,6 +203,7 @@ const App: FC = () => {
             break;
           case 'image_frame':
             framesReceivedRef.current++;
+            console.log('[WS] Frame received #', framesReceivedRef.current, 'data length:', message.data?.length || 0);
             const frameDataUrl = `data:image/jpeg;base64,${message.data}`;
             setImageSrc(frameDataUrl);
             setImageSourceType(message.source || 'simulated');
@@ -336,6 +345,7 @@ const App: FC = () => {
     }
   };
   const handleStreaming = (start: boolean) => {
+    console.log('[App] handleStreaming called:', start, 'demoMode:', demoMode, 'cameraStatus:', cameraStatus);
     if (demoMode) {
       setDemoStreaming(start);
       addLog(start ? 'Demo streaming started' : 'Demo streaming stopped', 'app');
