@@ -11,14 +11,14 @@ from PIL import Image
 try:
     import pyqas
     IS_SIMULATED = False
-    logging.info("Successfully imported 'pyqas' library. Real camera mode.")
 except ImportError:
-    logging.warning("Could not import 'pyqas'. Falling back to simulation mode.")
     IS_SIMULATED = True
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 class SimulatedFrameStreamer:
-    def __init__(self, **kwargs):
+    def __init__(self):
         self._is_powered = False
         self._is_running = False
         self.integration_time = 500000
@@ -37,32 +37,24 @@ class SimulatedFrameStreamer:
         xv, yv = np.meshgrid(x, y)
         self._gradient = (xv + yv).astype(np.uint16)
         self._frame_counter = 0
-        logging.info("Initialized SIMULATED pyqas.FrameStreamer.")
 
     def perform_power_up(self):
-        if not self._is_powered:
-            logging.info("Simulating power ON.")
-            self._is_powered = True
+        self._is_powered = True
         return True
 
     def perform_power_down(self):
-        if self._is_powered:
-            logging.info("Simulating power OFF.")
-            self._is_powered = False
-            self._is_running = False
+        self._is_powered = False
+        self._is_running = False
         return True
 
     def start(self):
-        if self._is_powered and not self._is_running:
-            logging.info("Simulating stream START.")
+        if self._is_powered:
             self._is_running = True
         return self._is_running
 
     def stop(self):
-        if self._is_running:
-            logging.info("Simulating stream STOP.")
-            self._is_running = False
-        return not self._is_running
+        self._is_running = False
+        return True
 
     def is_running(self):
         return self._is_running
@@ -88,7 +80,6 @@ class SimulatedFrameStreamer:
         return frames
 
     def set_dac_voltage(self, channel, voltage):
-        logging.info(f"Sim: set DAC {channel} to {voltage}V.")
         return True
 
     def read_fpga_register(self, address):
@@ -98,7 +89,7 @@ class SimulatedFrameStreamer:
         return True
 
     def write_fpga_register(self, addresses, values):
-        return self.write_fpga_registers(addresses, values)
+        return True
 
     def read_device(self, address):
         return np.random.randint(0, 256)
@@ -176,44 +167,68 @@ class SimulatedFrameStreamer:
         return self.frame_rate
 
 
-STATE = {"camera": None, "streaming_task": None, "stop_streaming": False}
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+camera = None
+streaming = False
 
 
 def get_camera_status():
-    cam = STATE.get("camera")
-    if not cam:
+    global camera
+    if not camera:
         return "POWERED_OFF"
-    try:
-        if cam.is_running():
-            return "STREAMING"
-        if hasattr(cam, '_is_powered'):
-            return "IDLE" if cam._is_powered else "POWERED_OFF"
+    if camera.is_running():
+        return "STREAMING"
+    if hasattr(camera, '_is_powered') and camera._is_powered:
         return "IDLE"
-    except Exception:
-        return "POWERED_OFF"
+    return "POWERED_OFF"
 
 
-async def send_status_update(websocket, new_status):
-    logging.info(f"State changed to: {new_status}")
-    camera_info = get_camera_info()
-    await websocket.send(json.dumps({"type": "status_update", "status": new_status, "camera_info": camera_info}))
+def get_camera_info():
+    global camera
+    if not camera:
+        return {"temperature": None, "integration_time_ms": None}
 
+    info = {"temperature": None, "integration_time_ms": None}
 
-async def send_log(websocket, message):
-    logging.info(f"Log: {message}")
-    await websocket.send(json.dumps({"type": "log", "message": message}))
+    try:
+        info["temperature"] = float(camera.read_temperature())
+    except:
+        pass
 
+    try:
+        info["integration_time_ms"] = camera.get_integration_time() / 100_000.0
+    except:
+        pass
 
-async def send_error(websocket, message):
-    logging.error(f"Error: {message}")
-    await websocket.send(json.dumps({"type": "error", "message": message}))
+    if hasattr(camera, 'aec_enabled'):
+        info["aec"] = {
+            "enabled": camera.aec_enabled,
+            "lower_limit": getattr(camera, 'aec_lower_limit', None),
+            "upper_limit": getattr(camera, 'aec_upper_limit', None),
+            "num_frames": getattr(camera, 'aec_num_frames', None)
+        }
+
+    if hasattr(camera, 'agc_enabled'):
+        info["agc"] = {
+            "enabled": camera.agc_enabled,
+            "min_target": getattr(camera, 'agc_min_target', None),
+            "max_target": getattr(camera, 'agc_max_target', None)
+        }
+
+    if hasattr(camera, 'nuc_enabled'):
+        info["nuc_enabled"] = camera.nuc_enabled
+
+    if hasattr(camera, 'bpr_enabled'):
+        info["bpr_enabled"] = camera.bpr_enabled
+
+    if hasattr(camera, 'frame_rate'):
+        info["frame_rate"] = camera.frame_rate
+
+    return info
 
 
 def create_jpeg_from_frame(frame_obj):
     frame_data = frame_obj.image
     if not isinstance(frame_data, np.ndarray):
-        logging.error(f"Frame data is not a NumPy array: {type(frame_data)}")
         return None, None, None
 
     raw_min = int(frame_data.min())
@@ -221,356 +236,178 @@ def create_jpeg_from_frame(frame_obj):
     raw_mean = float(frame_data.mean())
 
     histogram, _ = np.histogram(frame_data.ravel(), bins=128, range=(0, 16384))
-    histogram_list = histogram.tolist()
 
     min_val, max_val = raw_min, raw_max
     if max_val == min_val:
         max_val = min_val + 1
     scale = 255.0 / (max_val - min_val)
-    normalized_frame = ((frame_data - min_val) * scale).astype(np.uint8)
-    image = Image.fromarray(normalized_frame)
+    normalized = ((frame_data - min_val) * scale).astype(np.uint8)
+
+    image = Image.fromarray(normalized)
     buffer = BytesIO()
     image.save(buffer, format="JPEG", quality=70)
     jpeg_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
-    stats = {"min": raw_min, "max": raw_max, "mean": raw_mean}
-    return jpeg_b64, histogram_list, stats
+    return jpeg_b64, histogram.tolist(), {"min": raw_min, "max": raw_max, "mean": raw_mean}
 
 
-def get_camera_info():
-    cam = STATE.get("camera")
-    if not cam:
-        return {"temperature": None, "integration_time_ms": None}
+async def send_json(ws, data):
+    await ws.send(json.dumps(data))
 
-    temperature = None
-    integration_time_ms = None
 
-    if hasattr(cam, 'read_temperature'):
+async def stream_loop(ws):
+    global camera, streaming
+    logging.info(">>> STREAM LOOP STARTED <<<")
+    frame_count = 0
+
+    while streaming and camera and camera.is_running():
         try:
-            temperature = float(cam.read_temperature())
-        except Exception:
-            pass
-    elif hasattr(cam, 'get_temperature'):
-        try:
-            temperature = float(cam.get_temperature())
-        except Exception:
-            pass
+            frames = camera.get_frames(num_frames=1)
+            if frames:
+                jpeg_b64, histogram, stats = create_jpeg_from_frame(frames[0])
+                if jpeg_b64:
+                    await send_json(ws, {
+                        "type": "image_frame",
+                        "data": jpeg_b64,
+                        "source": "simulated" if IS_SIMULATED else "live",
+                        "histogram": histogram,
+                        "stats": stats,
+                        "camera_info": get_camera_info()
+                    })
+                    frame_count += 1
+                    if frame_count % 30 == 0:
+                        logging.info(f"Sent {frame_count} frames")
 
-    if hasattr(cam, 'get_integration_time'):
-        try:
-            raw_integration = cam.get_integration_time()
-            integration_time_ms = raw_integration / 100_000.0
-        except Exception:
-            pass
-    elif hasattr(cam, 'integration_time'):
-        try:
-            integration_time_ms = cam.integration_time / 100_000.0
-        except Exception:
-            pass
-
-    info = {"temperature": temperature, "integration_time_ms": integration_time_ms}
-
-    if hasattr(cam, 'aec_enabled'):
-        info["aec"] = {
-            "enabled": cam.aec_enabled,
-            "lower_limit": getattr(cam, 'aec_lower_limit', None),
-            "upper_limit": getattr(cam, 'aec_upper_limit', None),
-            "num_frames": getattr(cam, 'aec_num_frames', None)
-        }
-
-    if hasattr(cam, 'agc_enabled'):
-        info["agc"] = {
-            "enabled": cam.agc_enabled,
-            "min_target": getattr(cam, 'agc_min_target', None),
-            "max_target": getattr(cam, 'agc_max_target', None)
-        }
-
-    if hasattr(cam, 'nuc_enabled'):
-        info["nuc_enabled"] = cam.nuc_enabled
-
-    if hasattr(cam, 'bpr_enabled'):
-        info["bpr_enabled"] = cam.bpr_enabled
-
-    if hasattr(cam, 'get_frame_rate'):
-        try:
-            info["frame_rate"] = cam.get_frame_rate()
-        except Exception:
-            pass
-    elif hasattr(cam, 'frame_rate'):
-        info["frame_rate"] = cam.frame_rate
-
-    return info
-
-
-async def stream_frames(websocket):
-    logging.info("Streaming started")
-    STATE["stop_streaming"] = False
-    frame_interval = 1.0 / 30.0
-
-    while get_camera_status() == "STREAMING" and not STATE["stop_streaming"]:
-        try:
-            cam = STATE.get("camera")
-            if not cam:
-                break
-
-            start_time = time.time()
-
-            frames = cam.get_frames(num_frames=1)
-            if not frames:
-                await asyncio.sleep(0.01)
-                continue
-
-            frame = frames[0]
-            jpeg_b64, histogram, stats = create_jpeg_from_frame(frame)
-
-            if jpeg_b64:
-                camera_info = get_camera_info()
-                msg = json.dumps({
-                    "type": "image_frame",
-                    "data": jpeg_b64,
-                    "source": "simulated" if IS_SIMULATED else "live",
-                    "histogram": histogram,
-                    "stats": stats,
-                    "camera_info": camera_info
-                })
-                await websocket.send(msg)
-                logging.debug(f"Sent frame, size={len(jpeg_b64)}")
-
-            elapsed = time.time() - start_time
-            sleep_time = max(0.001, frame_interval - elapsed)
-            await asyncio.sleep(sleep_time)
+            await asyncio.sleep(0.033)
 
         except websockets.ConnectionClosed:
-            logging.warning("Connection closed during streaming")
+            logging.info("Connection closed during stream")
             break
         except Exception as e:
-            logging.error(f"Streaming error: {e}")
+            logging.error(f"Stream error: {e}")
             await asyncio.sleep(0.1)
 
-    logging.info("Streaming stopped")
-    STATE["streaming_task"] = None
-    try:
-        await send_status_update(websocket, get_camera_status())
-    except:
-        pass
-
-
-async def handle_power_on(websocket, params):
-    STATE["camera"].perform_power_up()
-    await send_log(websocket, "Camera powered on.")
-
-    for channel, voltage in {0: 0.1, 1: 0.9, 2: 2.0}.items():
-        if hasattr(STATE["camera"], 'set_dac_voltage'):
-            STATE["camera"].set_dac_voltage(channel, voltage)
-
-    await send_log(websocket, "Default bias voltages applied.")
-    await send_status_update(websocket, "IDLE")
-
-
-async def handle_power_off(websocket, params):
-    STATE["stop_streaming"] = True
-    if STATE["streaming_task"]:
-        STATE["streaming_task"].cancel()
-        try:
-            await STATE["streaming_task"]
-        except asyncio.CancelledError:
-            pass
-    STATE["camera"].perform_power_down()
-    await send_log(websocket, "Camera powered off.")
-    await send_status_update(websocket, "POWERED_OFF")
-
-
-async def handle_start_stream(websocket, params):
-    if get_camera_status() != "IDLE":
-        await send_error(websocket, "Camera must be idle to start stream.")
-        return
-    STATE["camera"].start()
-    await send_log(websocket, "Stream started.")
-    await send_status_update(websocket, "STREAMING")
-    STATE["streaming_task"] = asyncio.create_task(stream_frames(websocket))
-
-
-async def handle_stop_stream(websocket, params):
-    if get_camera_status() != "STREAMING":
-        await send_error(websocket, "Camera is not streaming.")
-        return
-    STATE["stop_streaming"] = True
-    if STATE["streaming_task"]:
-        STATE["streaming_task"].cancel()
-        try:
-            await STATE["streaming_task"]
-        except asyncio.CancelledError:
-            pass
-    STATE["camera"].stop()
-    await send_log(websocket, "Stream stopped.")
-    await send_status_update(websocket, "IDLE")
-
-
-async def handle_get_status(websocket, params):
-    status = get_camera_status()
-    await send_status_update(websocket, status)
-
-
-async def handle_get_frames(websocket, params):
-    if get_camera_status() == 'POWERED_OFF':
-        await send_error(websocket, "Camera is powered off.")
-        return
-    num_frames = params.get('num_frames', 1)
-    frames = STATE["camera"].get_frames(num_frames=num_frames)
-    await send_log(websocket, f"Captured {len(frames)} frame(s).")
-    for frame in frames:
-        jpeg_b64, histogram, stats = create_jpeg_from_frame(frame)
-        if jpeg_b64:
-            camera_info = get_camera_info()
-            await websocket.send(json.dumps({
-                "type": "image_frame",
-                "data": jpeg_b64,
-                "source": "simulated" if IS_SIMULATED else "live",
-                "histogram": histogram,
-                "stats": stats,
-                "camera_info": camera_info
-            }))
-
-
-CALIBRATION_DATA = {
-    "dark_images": [],
-    "bright_images": [],
-    "temperature": 25.0,
-    "integration_time_ms": 5.0,
-    "coefficients_generated": False
-}
-
-
-async def handle_upload_calibration_images(websocket, params):
-    CALIBRATION_DATA["dark_images"] = params.get('dark_images', [])
-    CALIBRATION_DATA["bright_images"] = params.get('bright_images', [])
-    CALIBRATION_DATA["temperature"] = params.get('temperature', 25.0)
-    CALIBRATION_DATA["integration_time_ms"] = params.get('integration_time_ms', 5.0)
-    CALIBRATION_DATA["coefficients_generated"] = False
-    await send_log(websocket, f"Received {len(CALIBRATION_DATA['dark_images'])} dark and {len(CALIBRATION_DATA['bright_images'])} bright images.")
-
-
-async def handle_generate_calibration_coefficients(websocket, params):
-    if not CALIBRATION_DATA["dark_images"] or not CALIBRATION_DATA["bright_images"]:
-        await send_error(websocket, "Missing calibration images.")
-        return
-
-    await send_log(websocket, "Generating NUC/BPR coefficients...")
-    if IS_SIMULATED:
-        await asyncio.sleep(0.5)
-    CALIBRATION_DATA["coefficients_generated"] = True
-    await send_log(websocket, "Coefficients generated.")
-
-
-async def handle_write_calibration_to_flash(websocket, params):
-    slot = params.get('memory_slot', 0)
-    await send_log(websocket, f"Writing calibration to flash slot {slot}...")
-    if IS_SIMULATED:
-        await asyncio.sleep(0.5)
-    await send_log(websocket, f"Calibration written to slot {slot}.")
-
-
-async def handle_run_calibration_script(websocket, params):
-    await send_log(websocket, "Running calibration script...")
-    if IS_SIMULATED:
-        await asyncio.sleep(1.0)
-    await send_log(websocket, "Calibration complete.")
-
-
-async def handle_set_dac_voltage(websocket, params):
-    channel = params.get('channel', 0)
-    voltage = params.get('voltage', 0.0)
-    cam = STATE.get("camera")
-    if cam and hasattr(cam, 'set_dac_voltage'):
-        cam.set_dac_voltage(channel, voltage)
-        await send_log(websocket, f"Set DAC {channel} to {voltage}V.")
-    else:
-        await send_log(websocket, f"DAC control not available.")
-
-
-async def passthrough_handler(websocket, command, params):
-    cam = STATE.get("camera")
-    if not cam:
-        await send_error(websocket, "Camera not initialized")
-        return
-
-    if hasattr(cam, command):
-        try:
-            result = getattr(cam, command)(**params)
-            result_str = str(result)[:200]
-            await send_log(websocket, f"Executed '{command}': {result_str}")
-        except Exception as e:
-            await send_error(websocket, f"Error in '{command}': {e}")
-    else:
-        await send_error(websocket, f"Unknown command: {command}")
+    logging.info(f">>> STREAM LOOP ENDED after {frame_count} frames <<<")
+    streaming = False
 
 
 async def handler(websocket):
+    global camera, streaming
     logging.info(f"Client connected: {websocket.remote_address}")
-    try:
-        if STATE["camera"] is None:
-            if IS_SIMULATED:
-                STATE["camera"] = SimulatedFrameStreamer()
-            else:
-                try:
-                    STATE["camera"] = pyqas.FrameStreamer()
-                except Exception as e:
-                    logging.error(f"Failed to init camera: {e}")
-                    await send_error(websocket, f"Hardware error: {e}")
-                    return
 
-        await send_log(websocket, "Connected to camera server.")
-        await handle_get_status(websocket, {})
-
-        async for message in websocket:
+    if camera is None:
+        if IS_SIMULATED:
+            camera = SimulatedFrameStreamer()
+            logging.info("Using SIMULATED camera")
+        else:
             try:
-                data = json.loads(message)
-                command = data.get("command")
-                params = data.get("params", {})
-                logging.info(f"Command: {command}")
-
-                handlers = {
-                    "power_on": handle_power_on,
-                    "power_off": handle_power_off,
-                    "start_stream": handle_start_stream,
-                    "stop_stream": handle_stop_stream,
-                    "get_status": handle_get_status,
-                    "get_frames": handle_get_frames,
-                    "run_calibration_script": handle_run_calibration_script,
-                    "upload_calibration_images": handle_upload_calibration_images,
-                    "generate_calibration_coefficients": handle_generate_calibration_coefficients,
-                    "write_calibration_to_flash": handle_write_calibration_to_flash,
-                    "set_dac_voltage": handle_set_dac_voltage,
-                }
-
-                if command in handlers:
-                    await handlers[command](websocket, params)
-                else:
-                    await passthrough_handler(websocket, command, params)
-
+                camera = pyqas.FrameStreamer()
+                logging.info("Using REAL camera")
             except Exception as e:
-                logging.error(f"Command error: {e}", exc_info=True)
-                await send_error(websocket, f"Error: {e}")
+                logging.error(f"Failed to init camera: {e}")
+                await send_json(websocket, {"type": "error", "message": str(e)})
+                return
 
-    except websockets.exceptions.ConnectionClosed as e:
-        logging.info(f"Client disconnected: {e}")
+    await send_json(websocket, {"type": "log", "message": "Connected to camera server"})
+    await send_json(websocket, {"type": "status_update", "status": get_camera_status(), "camera_info": get_camera_info()})
+
+    stream_task = None
+
+    try:
+        async for message in websocket:
+            data = json.loads(message)
+            cmd = data.get("command")
+            params = data.get("params", {})
+            logging.info(f"Command: {cmd}")
+
+            if cmd == "power_on":
+                camera.perform_power_up()
+                for ch, v in {0: 0.1, 1: 0.9, 2: 2.0}.items():
+                    if hasattr(camera, 'set_dac_voltage'):
+                        camera.set_dac_voltage(ch, v)
+                await send_json(websocket, {"type": "log", "message": "Camera powered on"})
+                await send_json(websocket, {"type": "status_update", "status": "IDLE", "camera_info": get_camera_info()})
+
+            elif cmd == "power_off":
+                streaming = False
+                if stream_task:
+                    stream_task.cancel()
+                    try:
+                        await stream_task
+                    except:
+                        pass
+                camera.perform_power_down()
+                await send_json(websocket, {"type": "log", "message": "Camera powered off"})
+                await send_json(websocket, {"type": "status_update", "status": "POWERED_OFF", "camera_info": get_camera_info()})
+
+            elif cmd == "start_stream":
+                if get_camera_status() == "IDLE":
+                    camera.start()
+                    streaming = True
+                    await send_json(websocket, {"type": "log", "message": "Stream started"})
+                    await send_json(websocket, {"type": "status_update", "status": "STREAMING", "camera_info": get_camera_info()})
+                    stream_task = asyncio.create_task(stream_loop(websocket))
+                else:
+                    await send_json(websocket, {"type": "error", "message": "Camera must be IDLE to start stream"})
+
+            elif cmd == "stop_stream":
+                streaming = False
+                if stream_task:
+                    stream_task.cancel()
+                    try:
+                        await stream_task
+                    except:
+                        pass
+                camera.stop()
+                await send_json(websocket, {"type": "log", "message": "Stream stopped"})
+                await send_json(websocket, {"type": "status_update", "status": "IDLE", "camera_info": get_camera_info()})
+
+            elif cmd == "get_status":
+                await send_json(websocket, {"type": "status_update", "status": get_camera_status(), "camera_info": get_camera_info()})
+
+            elif cmd == "get_frames":
+                n = params.get('num_frames', 1)
+                frames = camera.get_frames(num_frames=n)
+                for f in frames:
+                    jpeg_b64, histogram, stats = create_jpeg_from_frame(f)
+                    if jpeg_b64:
+                        await send_json(websocket, {
+                            "type": "image_frame",
+                            "data": jpeg_b64,
+                            "source": "simulated" if IS_SIMULATED else "live",
+                            "histogram": histogram,
+                            "stats": stats,
+                            "camera_info": get_camera_info()
+                        })
+                await send_json(websocket, {"type": "log", "message": f"Captured {len(frames)} frame(s)"})
+
+            elif cmd == "set_dac_voltage":
+                if hasattr(camera, 'set_dac_voltage'):
+                    camera.set_dac_voltage(params.get('channel', 0), params.get('voltage', 0))
+                await send_json(websocket, {"type": "log", "message": f"Set DAC {params.get('channel')} to {params.get('voltage')}V"})
+
+            elif hasattr(camera, cmd):
+                try:
+                    result = getattr(camera, cmd)(**params)
+                    await send_json(websocket, {"type": "log", "message": f"Executed {cmd}: {str(result)[:100]}"})
+                except Exception as e:
+                    await send_json(websocket, {"type": "error", "message": f"Error in {cmd}: {e}"})
+            else:
+                await send_json(websocket, {"type": "error", "message": f"Unknown command: {cmd}"})
+
+    except websockets.ConnectionClosed:
+        logging.info("Client disconnected")
     finally:
-        STATE["stop_streaming"] = True
-        if STATE["streaming_task"]:
-            STATE["streaming_task"].cancel()
-        logging.info("Handler finished.")
+        streaming = False
+        if stream_task:
+            stream_task.cancel()
 
 
 async def main():
-    host = "0.0.0.0"
-    port = 8765
-    async with websockets.serve(handler, host, port):
-        logging.info(f"Server running on ws://{host}:{port}")
+    logging.info("Starting WebSocket server on ws://localhost:8765")
+    async with websockets.serve(handler, "localhost", 8765):
         await asyncio.Future()
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logging.info("Server stopped.")
+    asyncio.run(main())
