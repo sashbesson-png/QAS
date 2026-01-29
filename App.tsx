@@ -16,6 +16,52 @@ import { ErrorPanel } from './components/ErrorPanel';
 
 const WEBSOCKET_URL = "ws://localhost:8765";
 
+function generateSimulatedFrame(width: number, height: number): { dataUrl: string; histogram: number[]; stats: { min: number; max: number; mean: number } } {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d')!;
+
+  const time = Date.now() / 1000;
+  const imageData = ctx.createImageData(width, height);
+  const data = imageData.data;
+
+  let min = 255, max = 0, sum = 0;
+  const histogram = new Array(256).fill(0);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+
+      const wave1 = Math.sin((x / 30) + time * 2) * 0.3;
+      const wave2 = Math.sin((y / 25) + time * 1.5) * 0.3;
+      const wave3 = Math.sin(Math.sqrt((x - width/2)**2 + (y - height/2)**2) / 20 - time * 3) * 0.2;
+
+      const noise = (Math.random() - 0.5) * 0.1;
+      const base = 0.5 + wave1 + wave2 + wave3 + noise;
+      const value = Math.max(0, Math.min(255, Math.floor(base * 255)));
+
+      data[i] = value;
+      data[i + 1] = value;
+      data[i + 2] = value;
+      data[i + 3] = 255;
+
+      min = Math.min(min, value);
+      max = Math.max(max, value);
+      sum += value;
+      histogram[value]++;
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+
+  return {
+    dataUrl: canvas.toDataURL('image/jpeg', 0.85),
+    histogram,
+    stats: { min, max, mean: sum / (width * height) }
+  };
+}
+
 const App: FC = () => {
   const [lastCommand, setLastCommand] = useState<string>('app_init()');
   const [logs, setLogs] = useState<string[]>(['Welcome to SWIR Camera Control GUI.']);
@@ -81,6 +127,10 @@ const App: FC = () => {
   const [imageStats, setImageStats] = useState<{ min: number; max: number; mean: number } | null>(null);
   const [cameraTemperature, setCameraTemperature] = useState<number | null>(null);
   const [cameraIntegrationTime, setCameraIntegrationTime] = useState<number | null>(null);
+
+  const [demoMode, setDemoMode] = useState<boolean>(false);
+  const [demoStreaming, setDemoStreaming] = useState<boolean>(false);
+  const demoIntervalRef = useRef<number | null>(null);
 
   const addLog = useCallback((message: string, source: 'app' | 'server' = 'app') => {
     const prefix = source === 'server' ? '[Server]' : '[App]';
@@ -229,20 +279,44 @@ const App: FC = () => {
     const interval = setInterval(() => {
         setFrameRate(frameCount.current);
         frameCount.current = 0;
-        // Update diagnostics state periodically (1Hz) instead of every message
         setDiagnostics({
           totalMessages: totalMessagesRef.current,
           framesReceived: framesReceivedRef.current,
           statusUpdates: statusUpdatesRef.current,
           lastRawMessage: lastRawMessageRef.current
         });
-        // Update recording frame count display
         if (isRecordingRef.current) {
           setRecordingFrameCount(recordedFramesRef.current.length);
         }
     }, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (demoStreaming) {
+      const interval = 1000 / targetFrameRate;
+      demoIntervalRef.current = window.setInterval(() => {
+        const { dataUrl, histogram, stats } = generateSimulatedFrame(640, 512);
+        setImageSrc(dataUrl);
+        setImageSourceType('simulated');
+        setHistogramData(histogram);
+        setImageStats(stats);
+        frameCount.current++;
+        framesReceivedRef.current++;
+        if (isRecordingRef.current) {
+          recordedFramesRef.current.push(dataUrl);
+        }
+      }, interval);
+      setCameraStatus('STREAMING');
+      return () => {
+        if (demoIntervalRef.current) {
+          clearInterval(demoIntervalRef.current);
+        }
+      };
+    } else if (demoMode) {
+      setCameraStatus('IDLE');
+    }
+  }, [demoStreaming, targetFrameRate, demoMode]);
 
 
   // Command Handlers
@@ -261,7 +335,14 @@ const App: FC = () => {
       sendCommand('power_off');
     }
   };
-  const handleStreaming = (start: boolean) => sendCommand(start ? 'start_stream' : 'stop_stream');
+  const handleStreaming = (start: boolean) => {
+    if (demoMode) {
+      setDemoStreaming(start);
+      addLog(start ? 'Demo streaming started' : 'Demo streaming stopped', 'app');
+    } else {
+      sendCommand(start ? 'start_stream' : 'stop_stream');
+    }
+  };
   
   const handleSetIntegrationTime = (value: number) => {
     setIntegrationTime(value);
@@ -426,7 +507,7 @@ const App: FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-900 font-sans text-gray-200 p-4 lg:p-6">
-      {wsStatus !== 'CONNECTED' && (
+      {wsStatus !== 'CONNECTED' && !demoMode && (
          <div className="fixed inset-0 bg-black/70 z-50 flex flex-col items-center justify-center text-center p-4 backdrop-blur-sm">
             <h2 className="text-3xl font-bold text-red-400 mb-4">Connection Lost</h2>
             <p className="text-lg text-gray-300">Could not connect to the local Python server.</p>
@@ -437,15 +518,24 @@ const App: FC = () => {
                 <p className="mt-2 text-gray-400 select-none">$ # Then run the server</p>
                 <p>$ python server.py</p>
             </div>
-         </div> 
+            <button
+              onClick={() => { setDemoMode(true); setCameraStatus('IDLE'); addLog('Demo mode activated - simulated frames will be generated in browser', 'app'); }}
+              className="mt-6 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors shadow-lg"
+            >
+              Enter Demo Mode (No Server Required)
+            </button>
+         </div>
       )}
-      <div className={`max-w-7xl mx-auto ${wsStatus !== 'CONNECTED' ? 'blur-sm' : ''}`}>
+      <div className={`max-w-7xl mx-auto ${wsStatus !== 'CONNECTED' && !demoMode ? 'blur-sm' : ''}`}>
         <header className="mb-6 flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <CameraIcon className="w-8 h-8 text-cyan-400" />
             <h1 className="text-2xl font-bold text-white tracking-tight">SWIR Camera Control</h1>
+            {demoMode && (
+              <span className="px-2 py-1 bg-yellow-600 text-yellow-100 text-xs font-semibold rounded">DEMO MODE</span>
+            )}
           </div>
-          <StatusBar status={cameraStatus} wsStatus={wsStatus} temperature={cameraTemperature} frameRate={frameRate} justConnected={justConnected} integrationTime={cameraIntegrationTime} />
+          <StatusBar status={cameraStatus} wsStatus={demoMode ? 'CONNECTED' : wsStatus} temperature={cameraTemperature} frameRate={frameRate} justConnected={justConnected} integrationTime={cameraIntegrationTime} />
         </header>
 
         <main className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -463,10 +553,10 @@ const App: FC = () => {
                   <button onClick={() => handlePower(false)} disabled={!isConnected || cameraStatus === 'POWERED_OFF'} className="flex items-center justify-center space-x-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-md">
                     <PowerIcon className="w-5 h-5" /><span>Power Off</span>
                   </button>
-                  <button onClick={() => handleStreaming(true)} disabled={!isConnected || cameraStatus !== 'IDLE'} className="flex items-center justify-center space-x-2 bg-cyan-600 hover:bg-cyan-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-md">
+                  <button onClick={() => handleStreaming(true)} disabled={(!isConnected && !demoMode) || cameraStatus !== 'IDLE'} className="flex items-center justify-center space-x-2 bg-cyan-600 hover:bg-cyan-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-md">
                      <PlayIcon className="w-5 h-5" /><span>Start Stream</span>
                   </button>
-                   <button onClick={() => handleStreaming(false)} disabled={!isConnected || cameraStatus !== 'STREAMING'} className="flex items-center justify-center space-x-2 bg-yellow-500 hover:bg-yellow-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-md">
+                   <button onClick={() => handleStreaming(false)} disabled={(!isConnected && !demoMode) || cameraStatus !== 'STREAMING'} className="flex items-center justify-center space-x-2 bg-yellow-500 hover:bg-yellow-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-md">
                     <StopIcon className="w-5 h-5" /><span>Stop Stream</span>
                   </button>
                 </div>
@@ -611,7 +701,7 @@ const App: FC = () => {
                   <div className="flex items-center space-x-3">
                     <button
                       onClick={handleToggleRecording}
-                      disabled={!isConnected || cameraStatus !== 'STREAMING'}
+                      disabled={(!isConnected && !demoMode) || cameraStatus !== 'STREAMING'}
                       className={`flex-1 flex items-center justify-center space-x-2 font-semibold py-2 px-4 rounded-lg transition-colors shadow-md ${
                         isRecording
                           ? 'bg-red-600 hover:bg-red-700 text-white'
